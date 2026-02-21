@@ -1,0 +1,33 @@
+{
+  "name": "codebase-graph-mcp",
+  "version": "0.1.0",
+  "description": "MCP server that builds a codebase dependency graph for AI coding assistants",
+  "type": "module",
+  "bin": {
+    "codebase-graph-mcp": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "codebase",
+    "dependency-graph",
+    "ai",
+    "claude"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "json5": "^2.2.3",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
