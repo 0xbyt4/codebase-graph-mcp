@@ -8,37 +8,61 @@ AI coding assistants read files one at a time. They don't know which files depen
 
 ## Solution
 
-This MCP server scans your project, builds a dependency graph, and exposes it through 5 tools:
+This MCP server scans your project, builds a dependency graph, and exposes it through 11 tools covering dependency analysis, impact prediction, architecture visualization, and git history insights.
+
+## Tools
+
+### Dependency Analysis
 
 | Tool | Description |
 |------|-------------|
 | `get_dependencies` | What does this file import? |
 | `get_dependents` | What files import this file? |
-| `impact_analysis` | If I change this file, what else is affected? (recursive) |
+| `impact_analysis` | If I change this file, what else is affected? (recursive BFS) |
+| `multi_file_impact` | Combined impact of multiple changed files. Accepts file list or git diff ref. |
 | `project_overview` | High-level view: file counts, most imported files, entry points, orphans |
 | `refresh_graph` | Force re-scan after file changes |
+
+### Architecture
+
+| Tool | Description |
+|------|-------------|
+| `detect_cycles` | Find circular dependencies using Tarjan's SCC algorithm |
+| `package_dependencies` | Package/module level dependency view with configurable depth |
+| `class_hierarchy` | Python class inheritance tree, methods, and subclass overrides |
+
+### Git History
+
+| Tool | Description |
+|------|-------------|
+| `file_churn` | Most frequently changed files in git history (hotspot detection) |
+| `co_change` | Files that frequently change together (hidden coupling detection) |
 
 ## Supported Languages
 
 - TypeScript / JavaScript (`.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`)
 - Python (`.py`)
+- Config files (`.json`, `.json5`) — parsed for module references
 
-## Install
+## Installation
+
+### Claude Code (CLI)
 
 ```bash
-npm install -g codebase-graph-mcp
+claude mcp add -s user codebase-graph -- node /path/to/codebase-graph-mcp/build/index.js
 ```
 
-## Usage with Claude Code
+### Claude Code (manual config)
 
-Add to your Claude Code MCP config (`~/.claude/claude_desktop_config.json`):
+Add to `~/.claude.json`:
 
 ```json
 {
   "mcpServers": {
     "codebase-graph": {
-      "command": "npx",
-      "args": ["-y", "codebase-graph-mcp"],
+      "type": "stdio",
+      "command": "node",
+      "args": ["/path/to/codebase-graph-mcp/build/index.js"],
       "env": {
         "PROJECT_ROOT": "/path/to/your/project"
       }
@@ -47,63 +71,141 @@ Add to your Claude Code MCP config (`~/.claude/claude_desktop_config.json`):
 }
 ```
 
-If `PROJECT_ROOT` is not set, the server uses the current working directory.
+### Project Root Resolution
+
+All tools accept an optional `project_root` parameter. Resolution order:
+
+1. `project_root` parameter in tool call (if provided)
+2. `PROJECT_ROOT` environment variable (if set)
+3. Current working directory (default)
 
 ## Example Output
 
 ### impact_analysis
 
 ```
-Impact analysis for src/utils/auth.ts:
+Impact analysis for src/providers/singleton.py:
 
-Directly affected (3):
-  - src/pages/LoginPage.tsx
-  - src/api/authApi.ts
-  - src/middleware/authMiddleware.ts
+Directly affected (46):
+  - src/providers/asr_provider.py
+  - src/providers/config_provider.py
+  - src/providers/io_provider.py
+  ...
 
-Indirectly affected (2):
-  - src/pages/Dashboard.tsx
-  - src/App.tsx
+Indirectly affected (3):
+  - src/providers/avatar_llm_state_provider.py
+  - src/providers/__init__.py
+  - src/providers/llm_history_manager.py
 
-Total affected files: 5
+Total affected files: 49
 ```
 
-### project_overview
+### detect_cycles
 
 ```
-Project Overview:
+Found 2 circular dependencies:
 
-Files: 47
-Dependencies: 128
+Cycle 1 (3 files):
+  src/a.py -> src/b.py -> src/c.py -> src/a.py
 
-File types:
-  .tsx: 22
-  .ts: 18
-  .py: 7
+Cycle 2 (2 files):
+  src/utils/x.py -> src/utils/y.py -> src/utils/x.py
+```
 
-Most imported files:
-  src/utils/helpers.ts (12 dependents)
-  src/types/index.ts (9 dependents)
+### class_hierarchy
 
-Entry points (no dependents):
-  - src/index.ts
-  - src/main.tsx
+```
+Class: OdomProviderBase
+File: src/providers/odom_provider_base.py
+Bases: SingletonProvider
+
+Methods (5):
+  - get_odom
+  - reset
+  - start
+  - stop
+  - update
+
+Subclasses (4):
+  TronOdomProvider (src/providers/tron_odom_provider.py)
+    overrides: start, stop, update
+  Turtlebot4OdomProvider (src/providers/turtlebot4_odom_provider.py)
+    overrides: start, stop, update
+  UnitreeG1OdomProvider (src/providers/unitree_g1_odom_provider.py)
+    overrides: start, stop
+  UnitreeGo2OdomProvider (src/providers/unitree_go2_odom_provider.py)
+    overrides: start, stop, update
+```
+
+### file_churn
+
+```
+File churn (last 90 days, 234 commits):
+
+File                                                         Commits  Last Changed
+──────────────────────────────────────────────────────────── ──────── ────────────
+src/providers/io_provider.py                                       18   2026-02-15
+src/actions/move/connector/ros2.py                                 14   2026-02-10
+src/runtime/config.py                                              12   2026-02-18
+```
+
+### co_change
+
+```
+Co-change analysis for src/providers/singleton.py (12 changes in 90 days):
+
+File                                                    Together     Total  Corr
+─────────────────────────────────────────────────────── ───────── ────── ─────
+src/providers/io_provider.py                                   8     18  0.67
+src/providers/config_provider.py                               6     10  0.60
+src/runtime/config.py                                          5     12  0.42
+```
+
+### package_dependencies
+
+```
+Package Dependencies (depth=2, 8 packages, 45 cross-package edges):
+
+src/providers (47 files)
+  -> src/zenoh_msgs, src/runtime
+  <- src/actions, src/inputs, src/fuser
+
+src/actions (82 files)
+  -> src/providers, src/inputs, src/llm
+  <- src/runtime
 ```
 
 ## How It Works
 
-1. Scans all supported files in the project (skips `node_modules`, `.git`, `build`, etc.)
+1. Scans all supported files in the project (skips `node_modules`, `.git`, `build`, `__pycache__`, etc.)
 2. Parses import/export statements using regex (zero external parser dependencies)
-3. Resolves relative paths to actual files (handles `.js` -> `.ts` ESM convention, index files, etc.)
+3. Resolves relative and absolute imports to actual files
+   - TypeScript: handles `.js` -> `.ts` ESM convention, index files, path aliases
+   - Python: handles relative imports (`from .module`) and absolute project imports (`from runtime.config`)
 4. Builds an adjacency list graph (dependencies + reverse dependencies)
-5. Caches the graph in memory, refresh with `refresh_graph` tool
+5. Parses config files for module references (e.g., JSON configs pointing to Python modules)
+6. Builds class inheritance hierarchy from Python files
+7. Caches the graph in memory per project root, refresh with `refresh_graph`
 
 ## Design Principles
 
-- **Zero dependencies** beyond the MCP SDK
+- **Zero runtime dependencies** beyond the MCP SDK
 - **Regex-based parsing** — no AST parsers, no native binaries, instant startup
 - **Works offline** — no API calls, no cloud services
-- **Minimal footprint** — 3 source files, ~300 lines of code
+- **Multi-project support** — cache per project root, switch between projects freely
+- **Language agnostic architecture** — easy to add new language support
+
+## Project Structure
+
+```
+src/
+  index.ts           -> MCP server + 11 tool definitions
+  parser.ts          -> Regex-based import parser (TS/JS + Python)
+  graph.ts           -> Dependency graph engine + cycle detection + package analysis
+  class-analyzer.ts  -> Python class hierarchy extraction
+  config-parser.ts   -> Config file module reference parser
+  git-history.ts     -> Git log analysis (churn + co-change)
+```
 
 ## License
 
