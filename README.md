@@ -40,9 +40,11 @@ This MCP server scans your project, builds a dependency graph, and exposes it th
 
 ## Supported Languages
 
-- TypeScript / JavaScript (`.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`)
-- Python (`.py`)
-- Config files (`.json`, `.json5`) — parsed for module references
+- **TypeScript / JavaScript** (`.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`)
+- **Python** (`.py`)
+- **Rust** (`.rs`) — `use crate::`, `use super::`, `use self::`, `mod`/`pub mod` declarations, glob imports, multi-line `use` with braces
+- **Cargo.toml** — workspace cross-crate dependency parsing (resolves `[workspace.dependencies]` path mappings)
+- **Config files** (`.json`, `.json5`) — parsed for module references
 
 ## Installation
 
@@ -177,15 +179,17 @@ src/actions (82 files)
 
 ## How It Works
 
-1. Scans all supported files in the project (skips `node_modules`, `.git`, `build`, `__pycache__`, etc.)
+1. Scans all supported files in the project (skips `node_modules`, `.git`, `build`, `target`, `__pycache__`, etc.)
 2. Parses import/export statements using regex (zero external parser dependencies)
 3. Resolves relative and absolute imports to actual files
    - TypeScript: handles `.js` -> `.ts` ESM convention, index files, path aliases
    - Python: handles relative imports (`from .module`) and absolute project imports (`from runtime.config`)
+   - Rust: handles `crate::`, `super::`, `self::` paths, `mod`/`pub mod` declarations, `mod.rs`/`lib.rs`/`main.rs` module resolution
 4. Builds an adjacency list graph (dependencies + reverse dependencies)
 5. Parses config files for module references (e.g., JSON configs pointing to Python modules)
-6. Builds class inheritance hierarchy from Python files
-7. Caches the graph in memory per project root, refresh with `refresh_graph`
+6. Parses `Cargo.toml` workspace for cross-crate dependency edges (maps `[workspace.dependencies]` path entries to crate entry points)
+7. Builds class inheritance hierarchy from Python files
+8. Caches the graph in memory per project root, refresh with `refresh_graph`
 
 ## Design Principles
 
@@ -200,10 +204,11 @@ src/actions (82 files)
 ```
 src/
   index.ts           -> MCP server + 11 tool definitions
-  parser.ts          -> Regex-based import parser (TS/JS + Python)
+  parser.ts          -> Regex-based import parser (TS/JS + Python + Rust)
   graph.ts           -> Dependency graph engine + cycle detection + package analysis
   class-analyzer.ts  -> Python class hierarchy extraction
   config-parser.ts   -> Config file module reference parser
+  cargo-parser.ts    -> Cargo.toml workspace cross-crate dependency parser
   git-history.ts     -> Git log analysis (churn + co-change)
 ```
 
