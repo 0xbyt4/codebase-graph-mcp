@@ -6,6 +6,10 @@ import {
   type ConfigDependency,
 } from "./config-parser.js";
 import {
+  parseCargoDependencies,
+  type CargoDependency,
+} from "./cargo-parser.js";
+import {
   buildClassHierarchy,
   type ClassHierarchy,
 } from "./class-analyzer.js";
@@ -19,6 +23,7 @@ const IGNORE_DIRS = new Set([
   "venv",
   "dist",
   "build",
+  "target",
   ".turbo",
   "coverage",
   ".cache",
@@ -33,6 +38,8 @@ export interface GraphData {
   files: Set<string>;
   // config -> Python module edges
   configDependencies: ConfigDependency[];
+  // Cargo.toml cross-crate edges (Rust workspaces)
+  cargoDependencies: CargoDependency[];
   // class hierarchy (Python only)
   classHierarchy: ClassHierarchy;
 }
@@ -93,6 +100,7 @@ export async function buildGraph(projectRoot: string): Promise<GraphData> {
     dependents: new Map(),
     files: new Set(),
     configDependencies: [],
+    cargoDependencies: [],
     classHierarchy: { classes: new Map(), subclasses: new Map(), fileClasses: new Map() },
   };
 
@@ -140,6 +148,25 @@ export async function buildGraph(projectRoot: string): Promise<GraphData> {
       graph.dependents.set(dep.targetFile, new Set());
     }
     graph.dependents.get(dep.targetFile)!.add(dep.configFile);
+  }
+
+  // Parse Cargo.toml workspace for cross-crate dependency edges
+  const cargoDeps = parseCargoDependencies(projectRoot);
+  graph.cargoDependencies = cargoDeps;
+
+  for (const dep of cargoDeps) {
+    graph.files.add(dep.sourceFile);
+    graph.files.add(dep.targetFile);
+
+    if (!graph.dependencies.has(dep.sourceFile)) {
+      graph.dependencies.set(dep.sourceFile, new Set());
+    }
+    graph.dependencies.get(dep.sourceFile)!.add(dep.targetFile);
+
+    if (!graph.dependents.has(dep.targetFile)) {
+      graph.dependents.set(dep.targetFile, new Set());
+    }
+    graph.dependents.get(dep.targetFile)!.add(dep.sourceFile);
   }
 
   // Build class hierarchy from Python files

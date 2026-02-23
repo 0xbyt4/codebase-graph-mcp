@@ -1,8 +1,9 @@
 import { readFileSync, existsSync, statSync } from "node:fs";
-import { resolve, dirname, extname, join } from "node:path";
+import { resolve, dirname, basename, extname, join } from "node:path";
 
 const TS_JS_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const PYTHON_EXTENSIONS = [".py"];
+const RUST_EXTENSIONS = [".rs"];
 const CONFIG_EXTENSIONS = [".json5", ".json"];
 const INDEX_FILES = ["index.ts", "index.tsx", "index.js", "index.jsx"];
 
@@ -28,17 +29,26 @@ const PYTHON_LINE_PATTERNS = [
   /^import\s+([\w.]+)/,
 ];
 
+// Rust import patterns (applied per-line)
+const RUST_LINE_PATTERNS = [
+  // use path::module;  |  use path::{items};  |  use path::*;  |  pub use ...
+  /^(?:pub\s+)?use\s+([^;{]+?)(?:::\{[^}]*\}|::\*)?\s*;/,
+  // mod name;  |  pub mod name;  (file module declaration, not inline mod {} blocks)
+  /^(?:pub\s+)?mod\s+(\w+)\s*;/,
+];
+
 export interface ParsedImport {
   raw: string;
   resolved: string | null;
 }
 
-export type FileType = "typescript" | "python" | "config" | "unknown";
+export type FileType = "typescript" | "python" | "rust" | "config" | "unknown";
 
 export function detectFileType(filePath: string): FileType {
   const ext = extname(filePath).toLowerCase();
   if (TS_JS_EXTENSIONS.includes(ext)) return "typescript";
   if (PYTHON_EXTENSIONS.includes(ext)) return "python";
+  if (RUST_EXTENSIONS.includes(ext)) return "rust";
   if (CONFIG_EXTENSIONS.includes(ext)) return "config";
   return "unknown";
 }
@@ -52,12 +62,16 @@ export function parseImports(
   if (fileType === "unknown" || fileType === "config") return [];
 
   const patterns =
-    fileType === "typescript" ? TS_LINE_PATTERNS : PYTHON_LINE_PATTERNS;
+    fileType === "typescript" ? TS_LINE_PATTERNS :
+    fileType === "rust" ? RUST_LINE_PATTERNS :
+    PYTHON_LINE_PATTERNS;
   const imports: ParsedImport[] = [];
   const seen = new Set<string>();
 
   // Normalize multi-line imports into single lines before parsing
-  const normalized = collapseMultiLineImports(content);
+  const normalized =
+    fileType === "rust" ? collapseRustMultiLineUse(content) :
+    collapseMultiLineImports(content);
   const lines = normalized.split("\n");
 
   for (const line of lines) {
@@ -78,7 +92,9 @@ export function parseImports(
       const resolved =
         fileType === "typescript"
           ? resolveTypeScriptImport(raw, filePath)
-          : resolvePythonImport(raw, filePath, projectRoot);
+          : fileType === "rust"
+            ? resolveRustImport(raw, filePath, projectRoot)
+            : resolvePythonImport(raw, filePath, projectRoot);
 
       imports.push({ raw, resolved });
     }
@@ -96,6 +112,14 @@ function collapseMultiLineImports(content: string): string {
       const collapsed = names.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
       return `${prefix}{ ${collapsed} }${suffix}`;
     },
+  );
+}
+
+function collapseRustMultiLineUse(content: string): string {
+  // Collapse multi-line use statements: use path::{  foo,  bar  };
+  return content.replace(
+    /(?:pub\s+)?use\s+[^;{]*\{[^}]*\}\s*;/g,
+    (match) => match.replace(/\n/g, " ").replace(/\s+/g, " "),
   );
 }
 
@@ -225,6 +249,97 @@ function resolvePythonModulePath(
   // Try as package
   const asPackage = join(resolved, "__init__.py");
   if (isFile(asPackage)) return asPackage;
+
+  return null;
+}
+
+function resolveRustImport(
+  importPath: string,
+  fromFile: string,
+  projectRoot?: string,
+): string | null {
+  // mod declaration (no :: separator) - e.g., from `mod foo;`
+  if (!importPath.includes("::")) {
+    return resolveRustModDeclaration(importPath, fromFile);
+  }
+
+  // crate:: - resolve from project's src/ directory
+  if (importPath.startsWith("crate::")) {
+    if (!projectRoot) return null;
+    const modulePath = importPath.slice("crate::".length);
+    return resolveRustModulePath(modulePath, join(projectRoot, "src"));
+  }
+
+  // super:: - resolve from parent module(s)
+  if (importPath.startsWith("super::")) {
+    let remaining = importPath;
+    let dir = getRustModuleDir(fromFile);
+    while (remaining.startsWith("super::")) {
+      remaining = remaining.slice("super::".length);
+      dir = dirname(dir);
+    }
+    return remaining ? resolveRustModulePath(remaining, dir) : null;
+  }
+
+  // self:: - resolve from current module directory
+  if (importPath.startsWith("self::")) {
+    const modulePath = importPath.slice("self::".length);
+    return resolveRustModulePath(modulePath, getRustModuleDir(fromFile));
+  }
+
+  // External crate (std::, serde::, etc.) - not in project
+  return null;
+}
+
+function getRustModuleDir(filePath: string): string {
+  const dir = dirname(filePath);
+  const base = basename(filePath, ".rs");
+
+  // mod.rs, lib.rs, main.rs -> module dir is the containing directory
+  if (base === "mod" || base === "lib" || base === "main") {
+    return dir;
+  }
+
+  // foo.rs -> submodules live in foo/ (sibling directory)
+  return join(dir, base);
+}
+
+function resolveRustModDeclaration(
+  name: string,
+  fromFile: string,
+): string | null {
+  const moduleDir = getRustModuleDir(fromFile);
+
+  // Try name.rs
+  const asFile = join(moduleDir, name + ".rs");
+  if (isFile(asFile)) return asFile;
+
+  // Try name/mod.rs
+  const asMod = join(moduleDir, name, "mod.rs");
+  if (isFile(asMod)) return asMod;
+
+  return null;
+}
+
+function resolveRustModulePath(
+  modulePath: string,
+  baseDir: string,
+): string | null {
+  const parts = modulePath.split("::");
+
+  // Try progressively removing trailing segments (they might be items, not modules)
+  for (let i = parts.length; i > 0; i--) {
+    const pathParts = parts.slice(0, i);
+    const resolved = join(baseDir, ...pathParts);
+
+    // Try as file: foo/bar.rs
+    const asFile = resolved + ".rs";
+    if (isFile(asFile)) return asFile;
+
+    // Try as directory module: foo/bar/mod.rs
+    const asMod = join(resolved, "mod.rs");
+    if (isFile(asMod)) return asMod;
+  }
 
   return null;
 }
