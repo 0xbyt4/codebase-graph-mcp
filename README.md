@@ -8,7 +8,7 @@ AI coding assistants read files one at a time. They don't know which files depen
 
 ## Solution
 
-This MCP server scans your project, builds a dependency graph, and exposes it through 11 tools covering dependency analysis, impact prediction, architecture visualization, and git history insights.
+This MCP server scans your project, builds a dependency graph, and exposes it through 12 tools covering dependency analysis, impact prediction, architecture visualization, interactive graph generation, and git history insights.
 
 ## Tools
 
@@ -30,6 +30,7 @@ This MCP server scans your project, builds a dependency graph, and exposes it th
 | `detect_cycles` | Find circular dependencies using Tarjan's SCC algorithm |
 | `package_dependencies` | Package/module level dependency view with configurable depth |
 | `class_hierarchy` | Python class inheritance tree, methods, and subclass overrides |
+| `visualize_graph` | Generate interactive HTML dependency graph, opens in browser |
 
 ### Git History
 
@@ -163,6 +164,38 @@ src/providers/config_provider.py                               6     10  0.60
 src/runtime/config.py                                          5     12  0.42
 ```
 
+### visualize_graph
+
+Generates an interactive HTML graph and opens it in the browser. Nodes are colored by directory, sized by import count. Drag, zoom, hover for details.
+
+```
+# All files (top 50)
+visualize_graph(top=50)
+
+# Only gateway-related files
+visualize_graph(scope="gateway", top=30)
+
+# Custom output path
+visualize_graph(output="/tmp/my_graph.html")
+```
+
+Output:
+```
+Graph saved to /path/to/project/codebase_graph.html
+
+Nodes: 50
+Edges: 224
+
+Top 10 most imported:
+  128 <- gateway/config.py
+  103 <- hermes_constants.py
+   91 <- hermes_cli/config.py
+   81 <- gateway/platforms/base.py
+   53 <- gateway/session.py
+
+Opened in browser.
+```
+
 ### package_dependencies
 
 ```
@@ -203,7 +236,7 @@ src/actions (82 files)
 
 ```
 src/
-  index.ts           -> MCP server + 11 tool definitions
+  index.ts           -> MCP server + 12 tool definitions
   parser.ts          -> Regex-based import parser (TS/JS + Python + Rust)
   graph.ts           -> Dependency graph engine + cycle detection + package analysis
   class-analyzer.ts  -> Python class hierarchy extraction

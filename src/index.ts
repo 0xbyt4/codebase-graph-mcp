@@ -824,6 +824,235 @@ server.tool(
   },
 );
 
+// Tool: visualize_graph
+server.tool(
+  "visualize_graph",
+  "Generate an interactive HTML dependency graph visualization. Opens in browser. Shows files as nodes colored by directory, edges as dependency arrows. Node size reflects how many files import it.",
+  {
+    top: z
+      .number()
+      .optional()
+      .describe("Number of top most-imported files to include (default: 40)"),
+    scope: z
+      .string()
+      .optional()
+      .describe("Directory scope to filter (e.g. 'gateway', 'agent', 'tools'). Empty for all."),
+    output: z
+      .string()
+      .optional()
+      .describe("Output HTML file path (default: codebase_graph.html in project root)"),
+    project_root: projectRootParam,
+  },
+  async ({ top, scope, output, project_root }) => {
+    try {
+      const root = resolveRoot(project_root);
+      const graph = await getGraph(root);
+      const topN = top || 40;
+      const outputPath = output || resolve(root, "codebase_graph.html");
+
+      // Count dependents for each file
+      const dependentCounts = new Map<string, number>();
+      for (const [file, deps] of graph.dependents.entries()) {
+        dependentCounts.set(file, deps.size);
+      }
+
+      // Sort by dependent count and take top N
+      const sorted = [...dependentCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, topN);
+      const topSet = new Set(sorted.map(([f]) => f));
+
+      // Apply scope filter
+      if (scope) {
+        for (const file of [...topSet]) {
+          const rel = relative(root, file);
+          if (!rel.startsWith(scope + "/") && !rel.startsWith(scope + "\\")) {
+            // Keep it if it's connected to scoped files
+            const deps = graph.dependencies.get(file) || new Set();
+            const revDeps = graph.dependents.get(file) || new Set();
+            const hasConnection = [...deps, ...revDeps].some((d) => {
+              const dr = relative(root, d);
+              return dr.startsWith(scope + "/");
+            });
+            if (!hasConnection) topSet.delete(file);
+          }
+        }
+      }
+
+      // Color mapping
+      const dirColors: Record<string, string> = {
+        gateway: "#4FC3F7",
+        "gateway/platforms": "#0288D1",
+        agent: "#66BB6A",
+        tools: "#FFA726",
+        hermes_cli: "#AB47BC",
+        cron: "#EF5350",
+        plugins: "#26A69A",
+        tests: "#78909C",
+      };
+      const defaultColor = "#FFD54F";
+
+      function getColor(relPath: string): string {
+        if (relPath.startsWith("gateway/platforms")) return dirColors["gateway/platforms"];
+        for (const [prefix, color] of Object.entries(dirColors)) {
+          if (relPath.startsWith(prefix)) return color;
+        }
+        return defaultColor;
+      }
+
+      function getGroup(relPath: string): string {
+        const parts = relPath.split("/");
+        if (parts.length === 1) return "root";
+        if (parts[0] === "gateway" && parts.length > 1 && parts[1] === "platforms") return "gateway/platforms";
+        return parts[0];
+      }
+
+      // Build nodes
+      const nodes: Array<{
+        id: string;
+        label: string;
+        title: string;
+        value: number;
+        color: string;
+        group: string;
+      }> = [];
+
+      for (const file of topSet) {
+        const rel = relative(root, file);
+        const count = dependentCounts.get(file) || 0;
+        nodes.push({
+          id: rel,
+          label: rel.replace(/\.py$|\.ts$|\.js$/, "").split("/").pop() || rel,
+          title: `<b>${rel}</b><br>Imported by: ${count} files`,
+          value: Math.max(count, 3),
+          color: getColor(rel),
+          group: getGroup(rel),
+        });
+      }
+
+      // Build edges (only between top files)
+      const edges: Array<{ from: string; to: string }> = [];
+      for (const file of topSet) {
+        const deps = graph.dependencies.get(file) || new Set();
+        const relFrom = relative(root, file);
+        for (const dep of deps) {
+          if (topSet.has(dep)) {
+            const relTo = relative(root, dep);
+            edges.push({ from: relFrom, to: relTo });
+          }
+        }
+      }
+
+      // Build legend
+      const groups = [...new Set(nodes.map((n) => n.group))].sort();
+      const legendItems = groups
+        .map((g) => {
+          const color = dirColors[g] || defaultColor;
+          return `<span style="color:${color}; margin-right:16px;">&#9679; ${g}</span>`;
+        })
+        .join("");
+
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+    <title>Codebase Graph - ${relative(process.env.HOME || "/", root)}</title>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        body { margin: 0; font-family: -apple-system, sans-serif; background: #1a1a2e; color: #eee; }
+        #graph { width: 100%; height: 90vh; }
+        #info { padding: 10px 20px; background: #16213e; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
+        #legend { font-size: 13px; }
+        #stats { font-size: 13px; opacity: 0.7; }
+        h3 { margin: 0; font-size: 16px; }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <div>
+            <h3>Codebase Dependency Graph</h3>
+            <div id="legend">${legendItems}</div>
+        </div>
+        <div id="stats">${nodes.length} files | ${edges.length} dependencies</div>
+    </div>
+    <div id="graph"></div>
+    <script>
+        var nodes = new vis.DataSet(${JSON.stringify(nodes, null, 2)});
+        var edges = new vis.DataSet(${JSON.stringify(
+          edges.map((e) => ({ ...e, arrows: "to" })),
+          null,
+          2,
+        )});
+        var container = document.getElementById("graph");
+        var data = { nodes: nodes, edges: edges };
+        var options = {
+            nodes: {
+                shape: "dot",
+                font: { color: "#eee", size: 12 },
+                borderWidth: 2,
+                shadow: true,
+            },
+            edges: {
+                color: { color: "#555", highlight: "#aaa", opacity: 0.6 },
+                smooth: { type: "continuous" },
+                width: 0.5,
+            },
+            physics: {
+                solver: "forceAtlas2Based",
+                forceAtlas2Based: {
+                    gravitationalConstant: -80,
+                    centralGravity: 0.01,
+                    springLength: 150,
+                    springConstant: 0.02,
+                    damping: 0.4,
+                },
+                stabilization: { iterations: 200 },
+            },
+            interaction: {
+                hover: true,
+                tooltipDelay: 100,
+                zoomView: true,
+                dragView: true,
+            },
+        };
+        var network = new vis.Network(container, data, options);
+    </script>
+</body>
+</html>`;
+
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(outputPath, html, "utf-8");
+
+      // Try to open in browser
+      try {
+        const { execSync: exec } = await import("node:child_process");
+        const platform = process.platform;
+        if (platform === "darwin") exec(`open "${outputPath}"`);
+        else if (platform === "linux") exec(`xdg-open "${outputPath}"`);
+        else if (platform === "win32") exec(`start "${outputPath}"`);
+      } catch {
+        // Browser open is best-effort
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Graph saved to ${outputPath}\n\nNodes: ${nodes.length}\nEdges: ${edges.length}\n\nTop 10 most imported:\n${sorted
+              .slice(0, 10)
+              .map(([f, c]) => `  ${c} <- ${relative(root, f)}`)
+              .join("\n")}\n\nOpened in browser.`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
