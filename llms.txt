@@ -1,0 +1,114 @@
+# codebase-graph-mcp
+
+> MCP server that builds a dependency graph of your codebase, enabling AI coding assistants to understand project structure and make safer changes.
+
+## What it does
+
+Scans source files (Python, TypeScript, JavaScript, Rust), parses import/export statements, and builds an in-memory dependency graph. Exposes 12 tools via the Model Context Protocol (MCP) that any compatible AI assistant (Claude Code, Hermes Agent, etc.) can call.
+
+## Tools (12)
+
+### Dependency Analysis
+- `get_dependencies` — files that a given file imports
+- `get_dependents` — files that import a given file
+- `impact_analysis` — recursive BFS of what breaks if you change a file
+- `multi_file_impact` — combined impact of multiple files, accepts git diff ref
+- `project_overview` — file counts, most imported files, entry points, orphans
+- `refresh_graph` — force re-scan after file changes
+
+### Architecture
+- `detect_cycles` — circular dependency detection (Tarjan's SCC)
+- `package_dependencies` — package-level dependency view with configurable depth
+- `class_hierarchy` — Python class inheritance, methods, subclass overrides
+- `visualize_graph` — generates interactive HTML graph (vis.js), opens in browser
+
+### Git History
+- `file_churn` — most frequently changed files (hotspot detection)
+- `co_change` — files that frequently change together (hidden coupling)
+
+## Supported Languages
+
+- Python (.py)
+- TypeScript / JavaScript (.ts, .tsx, .js, .jsx, .mjs, .cjs)
+- Rust (.rs) with Cargo.toml workspace parsing
+- Config files (.json, .json5) for module references
+
+## Installation
+
+### Claude Code
+```bash
+claude mcp add -s user codebase-graph -- node /path/to/codebase-graph-mcp/build/index.js
+```
+
+### Hermes Agent (config.yaml)
+```yaml
+mcp_servers:
+  codebase-graph:
+    command: "node"
+    args: ["/path/to/codebase-graph-mcp/build/index.js"]
+    env: {}
+```
+
+### From source
+```bash
+git clone https://github.com/0xbyt4/codebase-graph-mcp.git
+cd codebase-graph-mcp
+npm install
+npm run build
+```
+
+## Configuration
+
+All tools accept an optional `project_root` parameter. Resolution order:
+1. `project_root` parameter in tool call
+2. `PROJECT_ROOT` environment variable
+3. Current working directory
+
+## Key Parameters
+
+### visualize_graph
+- `top` (number, default 40) — number of top most-imported files to include
+- `scope` (string) — directory filter (e.g. "gateway", "agent", "tools")
+- `output` (string) — output HTML file path
+- `project_root` (string) — absolute path to project root
+
+### multi_file_impact
+- `files` (string[]) — list of changed file paths
+- `diff_ref` (string) — git ref to diff against (e.g. "main", "HEAD~3")
+
+### package_dependencies
+- `depth` (number, default 2) — directory depth for package grouping
+- `package_name` (string) — filter to specific package
+
+### class_hierarchy
+- `class_name` (string) — look up a specific class
+- `file` (string) — get all classes in a file
+- `method_name` (string) — find all classes that define/override a method
+
+### file_churn / co_change
+- `days` (number, default 90) — git history period to analyze
+
+## Architecture
+
+```
+src/
+  index.ts           — MCP server + 12 tool definitions
+  parser.ts          — regex-based import parser (TS/JS + Python + Rust)
+  graph.ts           — dependency graph engine + cycle detection + package analysis
+  class-analyzer.ts  — Python class hierarchy extraction
+  config-parser.ts   — config file module reference parser
+  cargo-parser.ts    — Cargo.toml workspace cross-crate dependency parser
+  git-history.ts     — git log analysis (churn + co-change)
+```
+
+## Design
+
+- Zero runtime dependencies beyond MCP SDK
+- Regex-based parsing (no AST parsers, no native binaries)
+- Works offline (no API calls)
+- Multi-project support (cache per project root)
+- Graph cached in memory, refresh with `refresh_graph`
+
+## License
+
+MIT
