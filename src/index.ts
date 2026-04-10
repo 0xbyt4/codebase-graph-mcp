@@ -1053,6 +1053,235 @@ server.tool(
   },
 );
 
+// ═══════════════════════════════════════════════════════════════════
+// Resources
+// ═══════════════════════════════════════════════════════════════════
+
+server.resource(
+  "project-overview",
+  "codebase://overview",
+  {
+    description: "High-level project dependency overview: file counts, most imported files, entry points, orphans.",
+    mimeType: "application/json",
+  },
+  async (uri) => {
+    const root = getDefaultRoot();
+    const graph = await getGraph(root);
+    const overview = getProjectOverview(graph, root);
+    return {
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify(overview, null, 2),
+        },
+      ],
+    };
+  },
+);
+
+server.resource(
+  "dependency-graph",
+  "codebase://graph",
+  {
+    description: "Full dependency graph as JSON adjacency list. Each file maps to its dependencies and dependents.",
+    mimeType: "application/json",
+  },
+  async (uri) => {
+    const root = getDefaultRoot();
+    const graph = await getGraph(root);
+    const data: Record<string, { dependencies: string[]; dependents: string[] }> = {};
+    for (const file of graph.files) {
+      const rel = relative(root, file);
+      data[rel] = {
+        dependencies: [...(graph.dependencies.get(file) || [])].map((f) => relative(root, f)),
+        dependents: [...(graph.dependents.get(file) || [])].map((f) => relative(root, f)),
+      };
+    }
+    return {
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify(data, null, 2),
+        },
+      ],
+    };
+  },
+);
+
+server.resource(
+  "circular-dependencies",
+  "codebase://cycles",
+  {
+    description: "Circular dependency cycles detected in the project.",
+    mimeType: "application/json",
+  },
+  async (uri) => {
+    const root = getDefaultRoot();
+    const graph = await getGraph(root);
+    const result = detectCycles(graph);
+    const cycles = result.cycles.map((cycle) =>
+      cycle.map((f) => relative(root, f)),
+    );
+    return {
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify({ totalCycles: result.totalCycles, cycles }, null, 2),
+        },
+      ],
+    };
+  },
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// Prompts
+// ═══════════════════════════════════════════════════════════════════
+
+server.prompt(
+  "analyze-impact",
+  "Analyze the impact of changing a file. Returns a structured prompt for the AI to reason about risks.",
+  { file: z.string().describe("File path relative to project root") },
+  async ({ file }) => {
+    const root = getDefaultRoot();
+    const graph = await getGraph(root);
+    const absPath = resolveFilePath(file, root);
+    const impact = getImpactAnalysis(graph, absPath);
+    const deps = getDependencies(graph, absPath).map((d) => relative(root, d));
+    const revDeps = getDependents(graph, absPath).map((d) => relative(root, d));
+
+    return {
+      messages: [
+        {
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text: `Analyze the risk of changing \`${file}\`:
+
+**Dependencies** (${deps.length} files this imports):
+${deps.map((d) => `- ${d}`).join("\n") || "None"}
+
+**Dependents** (${revDeps.length} files that import this):
+${revDeps.map((d) => `- ${d}`).join("\n") || "None"}
+
+**Total impact**: ${impact.totalAffectedFiles} files affected (${impact.directlyAffected.length} direct, ${impact.indirectlyAffected.length} indirect)
+
+What are the risks? What tests should be run? What files should be reviewed?`,
+          },
+        },
+      ],
+    };
+  },
+);
+
+server.prompt(
+  "find-hotspots",
+  "Identify the riskiest files in the codebase based on dependency count, churn, and coupling.",
+  async () => {
+    const root = getDefaultRoot();
+    const graph = await getGraph(root);
+    const overview = getProjectOverview(graph, root);
+
+    let churnData = "";
+    try {
+      const churn = getFileChurn(root, 90);
+      churnData = churn.files
+        .slice(0, 15)
+        .map((f) => `- ${f.file} (${f.commits} commits)`)
+        .join("\n");
+    } catch {
+      churnData = "(git history not available)";
+    }
+
+    return {
+      messages: [
+        {
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text: `Identify the riskiest files in this codebase.
+
+**Most imported files** (high dependency = high blast radius):
+${overview.mostImported.map((f) => `- ${f.file} (${f.count} dependents)`).join("\n")}
+
+**Most frequently changed files** (high churn = unstable):
+${churnData}
+
+**Total**: ${overview.totalFiles} files, ${overview.totalEdges} dependency edges
+
+Which files are the highest risk? Where should we add tests? What refactoring would reduce risk?`,
+          },
+        },
+      ],
+    };
+  },
+);
+
+server.prompt(
+  "review-pr",
+  "Generate a dependency-aware PR review checklist for changed files.",
+  { diff_ref: z.string().describe("Git ref to diff against (e.g. 'main', 'HEAD~3')") },
+  async ({ diff_ref }) => {
+    const root = getDefaultRoot();
+    const graph = await getGraph(root);
+
+    let changedFiles: string[] = [];
+    try {
+      const output = execSync(`git diff --name-only ${diff_ref}`, {
+        cwd: root,
+        encoding: "utf-8",
+        timeout: 10000,
+      }).trim();
+      if (output) changedFiles = output.split("\n");
+    } catch {
+      return {
+        messages: [
+          {
+            role: "user" as const,
+            content: { type: "text" as const, text: `Could not get diff against "${diff_ref}".` },
+          },
+        ],
+      };
+    }
+
+    const impact = getMultiFileImpact(
+      graph,
+      changedFiles.map((f) => resolve(root, f)),
+    );
+
+    return {
+      messages: [
+        {
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text: `Review this PR (diff against \`${diff_ref}\`):
+
+**Changed files** (${changedFiles.length}):
+${changedFiles.map((f) => `- ${f}`).join("\n")}
+
+**Directly affected** (${impact.directlyAffected.length} files import the changed files):
+${impact.directlyAffected.map((f) => `- ${relative(root, f)}`).join("\n") || "None"}
+
+**Indirectly affected** (${impact.indirectlyAffected.length}):
+${impact.indirectlyAffected.map((f) => `- ${relative(root, f)}`).join("\n") || "None"}
+
+**Total blast radius**: ${impact.totalAffectedFiles} files
+
+Review checklist:
+1. Are the directly affected files likely to break?
+2. Are there missing test updates for affected files?
+3. Are there circular dependency risks?
+4. What's the rollback plan if this breaks?`,
+          },
+        },
+      ],
+    };
+  },
+);
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
