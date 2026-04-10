@@ -1,3 +1,4 @@
+<img width="842" height="653" alt="Screenshot 2026-04-11 at 01 55 02" src="https://github.com/user-attachments/assets/f4e8d55e-2121-46b1-912d-9133090a3086" />
 # codebase-graph-mcp
 
 An MCP server that builds a dependency graph of your codebase, enabling AI coding assistants to understand project structure and make safer changes.
