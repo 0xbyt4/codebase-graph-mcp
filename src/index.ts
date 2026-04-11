@@ -17,7 +17,7 @@ import {
 } from "./graph.js";
 import { getClassInfo, getFileClasses, getMethodOverriders } from "./class-analyzer.js";
 import { getFileChurn, getCoChanges } from "./git-history.js";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 const server = new McpServer({
   name: "codebase-graph",
@@ -25,7 +25,20 @@ const server = new McpServer({
 });
 
 // Cache: supports multiple project roots
-const graphCache = new Map<string, GraphData>();
+const graphCache = new Map<string, { data: GraphData; createdAt: number }>();
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function safeJsonForScript(obj: unknown): string {
+  return JSON.stringify(obj, null, 2).replace(/<\//g, "<\\/");
+}
 
 function getDefaultRoot(): string {
   return process.env.PROJECT_ROOT || process.cwd();
@@ -38,17 +51,22 @@ function resolveRoot(override?: string): string {
   return getDefaultRoot();
 }
 
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 async function getGraph(root: string): Promise<GraphData> {
   const cached = graphCache.get(root);
-  if (cached) return cached;
+  if (cached && Date.now() - cached.createdAt < CACHE_TTL_MS) return cached.data;
   const graph = await buildGraph(root);
-  graphCache.set(root, graph);
+  graphCache.set(root, { data: graph, createdAt: Date.now() });
   return graph;
 }
 
 function resolveFilePath(file: string, root: string): string {
-  if (file.startsWith("/")) return file;
-  return resolve(root, file);
+  const resolved = file.startsWith("/") ? resolve(file) : resolve(root, file);
+  if (!resolved.startsWith(root)) {
+    throw new Error(`Path "${file}" resolves outside project root`);
+  }
+  return resolved;
 }
 
 function formatPath(absPath: string, root: string): string {
@@ -324,7 +342,7 @@ server.tool(
 
       if (diff_ref) {
         try {
-          const output = execSync(`git diff --name-only ${diff_ref}`, {
+          const output = execFileSync("git", ["diff", "--name-only", diff_ref, "--"], {
             cwd: root,
             encoding: "utf-8",
             timeout: 10000,
@@ -622,8 +640,11 @@ server.tool(
   {
     days: z
       .number()
+      .int()
+      .positive()
+      .max(365)
       .optional()
-      .describe("Number of days to analyze (default: 90)"),
+      .describe("Number of days to analyze (default: 90, max: 365)"),
     project_root: projectRootParam,
   },
   async ({ days, project_root }) => {
@@ -675,8 +696,11 @@ server.tool(
       .describe("File to analyze co-changes for (relative to project root)"),
     days: z
       .number()
+      .int()
+      .positive()
+      .max(365)
       .optional()
-      .describe("Number of days to analyze (default: 90)"),
+      .describe("Number of days to analyze (default: 90, max: 365)"),
     project_root: projectRootParam,
   },
   async ({ file, days, project_root }) => {
@@ -738,9 +762,12 @@ server.tool(
   {
     depth: z
       .number()
+      .int()
+      .min(1)
+      .max(10)
       .optional()
       .describe(
-        "Directory depth for package grouping (default: 2). e.g. depth=2 groups 'src/actions/move/connector/ros2.py' as 'src/actions'",
+        "Directory depth for package grouping (default: 2, max: 10). e.g. depth=2 groups 'src/actions/move/connector/ros2.py' as 'src/actions'",
       ),
     package_name: z
       .string()
@@ -831,8 +858,11 @@ server.tool(
   {
     top: z
       .number()
+      .int()
+      .positive()
+      .max(500)
       .optional()
-      .describe("Number of top most-imported files to include (default: 40)"),
+      .describe("Number of top most-imported files to include (default: 40, max: 500)"),
     scope: z
       .string()
       .optional()
@@ -848,7 +878,14 @@ server.tool(
       const root = resolveRoot(project_root);
       const graph = await getGraph(root);
       const topN = top || 40;
-      const outputPath = output || resolve(root, "codebase_graph.html");
+      const outputPath = resolve(root, output || "codebase_graph.html");
+
+      // Prevent writing outside project root
+      if (!outputPath.startsWith(root)) {
+        return {
+          content: [{ type: "text", text: `Error: output path must be within the project root (${root})` }],
+        };
+      }
 
       // Count dependents for each file
       const dependentCounts = new Map<string, number>();
@@ -948,14 +985,14 @@ server.tool(
       const legendItems = groups
         .map((g) => {
           const color = dirColors[g] || defaultColor;
-          return `<span style="color:${color}; margin-right:16px;">&#9679; ${g}</span>`;
+          return `<span style="color:${escapeHtml(color)}; margin-right:16px;">&#9679; ${escapeHtml(g)}</span>`;
         })
         .join("");
 
       const html = `<!DOCTYPE html>
 <html>
 <head>
-    <title>Codebase Graph - ${relative(process.env.HOME || "/", root)}</title>
+    <title>Codebase Graph - ${escapeHtml(relative(root, ".").split("/").pop() || "project")}</title>
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <style>
         body { margin: 0; font-family: -apple-system, sans-serif; background: #1a1a2e; color: #eee; }
@@ -976,11 +1013,9 @@ server.tool(
     </div>
     <div id="graph"></div>
     <script>
-        var nodes = new vis.DataSet(${JSON.stringify(nodes, null, 2)});
-        var edges = new vis.DataSet(${JSON.stringify(
+        var nodes = new vis.DataSet(${safeJsonForScript(nodes)});
+        var edges = new vis.DataSet(${safeJsonForScript(
           edges.map((e) => ({ ...e, arrows: "to" })),
-          null,
-          2,
         )});
         var container = document.getElementById("graph");
         var data = { nodes: nodes, edges: edges };
@@ -1024,11 +1059,11 @@ server.tool(
 
       // Try to open in browser
       try {
-        const { execSync: exec } = await import("node:child_process");
+        const { execFileSync: execOpen } = await import("node:child_process");
         const platform = process.platform;
-        if (platform === "darwin") exec(`open "${outputPath}"`);
-        else if (platform === "linux") exec(`xdg-open "${outputPath}"`);
-        else if (platform === "win32") exec(`start "${outputPath}"`);
+        if (platform === "darwin") execOpen("open", [outputPath]);
+        else if (platform === "linux") execOpen("xdg-open", [outputPath]);
+        else if (platform === "win32") execOpen("cmd", ["/c", "start", outputPath]);
       } catch {
         // Browser open is best-effort
       }
@@ -1229,7 +1264,7 @@ server.prompt(
 
     let changedFiles: string[] = [];
     try {
-      const output = execSync(`git diff --name-only ${diff_ref}`, {
+      const output = execFileSync("git", ["diff", "--name-only", diff_ref, "--"], {
         cwd: root,
         encoding: "utf-8",
         timeout: 10000,

@@ -327,13 +327,6 @@ export function getMethodOverriders(
       if (!cls.methods.includes(methodName)) continue;
 
       // Check if any ancestor also defines this method
-      const ancestorMethods = getAllAncestorMethods(hierarchy, cls.name);
-      // Remove the class's own methods to check only ancestors
-      for (const m of cls.methods) {
-        ancestorMethods.delete(m);
-      }
-      // Re-check: does any ancestor have this method?
-      // We need to walk ancestors only (not self)
       let ancestorHasMethod = false;
       const visitedBases = new Set<string>();
       const baseQueue = [...cls.bases];

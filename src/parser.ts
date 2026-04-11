@@ -74,8 +74,30 @@ export function parseImports(
     collapseMultiLineImports(content);
   const lines = normalized.split("\n");
 
+  let inTripleQuote = false;
+  let tripleQuoteChar = "";
+
   for (const line of lines) {
     const trimmed = line.trim();
+
+    // Track Python triple-quoted strings to skip false positive imports
+    if (fileType === "python") {
+      for (const tq of ['"""', "'''"]) {
+        const count = (trimmed.split(tq).length - 1);
+        if (count > 0) {
+          if (!inTripleQuote) {
+            inTripleQuote = true;
+            tripleQuoteChar = tq;
+            // If opens and closes on the same line (even count), stay outside
+            if (count % 2 === 0) inTripleQuote = false;
+          } else if (tq === tripleQuoteChar) {
+            inTripleQuote = false;
+          }
+        }
+      }
+      if (inTripleQuote) continue;
+    }
+
     // Skip comments and empty lines
     if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*") || trimmed.startsWith("#")) {
       continue;

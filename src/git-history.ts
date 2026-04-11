@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { relative } from "node:path";
 
 export interface FileChurnEntry {
@@ -40,8 +40,8 @@ export function getFileChurn(
   // Get commit count per file
   let output: string;
   try {
-    output = execSync(
-      `git log --since="${since}" --format="" --name-only --diff-filter=AMRC`,
+    output = execFileSync(
+      "git", ["log", `--since=${since}`, "--format=", "--name-only", "--diff-filter=AMRC"],
       {
         cwd: projectRoot,
         encoding: "utf-8",
@@ -71,8 +71,8 @@ export function getFileChurn(
   // Get total unique commits in period
   let totalCommits = 0;
   try {
-    const commitOutput = execSync(
-      `git rev-list --count --since="${since}" HEAD`,
+    const commitOutput = execFileSync(
+      "git", ["rev-list", "--count", `--since=${since}`, "HEAD"],
       {
         cwd: projectRoot,
         encoding: "utf-8",
@@ -89,18 +89,18 @@ export function getFileChurn(
     let firstSeen = "";
     let lastChanged = "";
     try {
-      lastChanged = execSync(
-        `git log -1 --since="${since}" --format="%ai" -- "${file}"`,
+      lastChanged = execFileSync(
+        "git", ["log", "-1", `--since=${since}`, "--format=%ai", "--", file],
         { cwd: projectRoot, encoding: "utf-8", timeout: 5000 },
       )
         .trim()
         .slice(0, 10);
-      firstSeen = execSync(
-        `git log --since="${since}" --format="%ai" -- "${file}" | tail -1`,
+      const allDates = execFileSync(
+        "git", ["log", `--since=${since}`, "--format=%ai", "--", file],
         { cwd: projectRoot, encoding: "utf-8", timeout: 5000 },
-      )
-        .trim()
-        .slice(0, 10);
+      ).trim();
+      const dateLines = allDates.split("\n").filter((l) => l.trim());
+      firstSeen = dateLines.length > 0 ? dateLines[dateLines.length - 1].trim().slice(0, 10) : "";
     } catch {
       // dates are optional
     }
@@ -128,8 +128,8 @@ export function getCoChanges(
   // Get all commits that touched the target file
   let commitHashes: string[];
   try {
-    const output = execSync(
-      `git log --since="${since}" --format="%H" -- "${relTarget}"`,
+    const output = execFileSync(
+      "git", ["log", `--since=${since}`, "--format=%H", "--", relTarget],
       {
         cwd: projectRoot,
         encoding: "utf-8",
@@ -159,8 +159,8 @@ export function getCoChanges(
   const coChangeCount = new Map<string, number>();
   for (const hash of commitHashes) {
     try {
-      const filesOutput = execSync(
-        `git diff-tree --no-commit-id --name-only -r ${hash}`,
+      const filesOutput = execFileSync(
+        "git", ["diff-tree", "--no-commit-id", "--name-only", "-r", hash],
         {
           cwd: projectRoot,
           encoding: "utf-8",
@@ -182,8 +182,8 @@ export function getCoChanges(
   // Get total change count per file for correlation calculation
   const fileChangeCounts = new Map<string, number>();
   try {
-    const output = execSync(
-      `git log --since="${since}" --format="" --name-only --diff-filter=AMRC`,
+    const output = execFileSync(
+      "git", ["log", `--since=${since}`, "--format=", "--name-only", "--diff-filter=AMRC"],
       {
         cwd: projectRoot,
         encoding: "utf-8",

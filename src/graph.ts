@@ -318,9 +318,15 @@ export function detectCycles(graph: GraphData): CycleResult {
         scc.push(w);
       } while (w !== v);
 
-      // Only keep SCCs with cycles (size > 1)
       if (scc.length > 1) {
         sccs.push(scc.reverse());
+      } else if (scc.length === 1) {
+        // Check for self-loop (file imports itself)
+        const file = scc[0];
+        const deps = graph.dependencies.get(file);
+        if (deps?.has(file)) {
+          sccs.push(scc);
+        }
       }
     }
   }
@@ -334,9 +340,14 @@ export function detectCycles(graph: GraphData): CycleResult {
   // Extract shortest cycle from each SCC (limit to 20)
   const cycles: string[][] = [];
   for (const scc of sccs.slice(0, 20)) {
-    const cycle = extractShortestCycle(graph, scc);
-    if (cycle) {
-      cycles.push(cycle);
+    if (scc.length === 1) {
+      // Self-loop: report as [file, file]
+      cycles.push([scc[0], scc[0]]);
+    } else {
+      const cycle = extractShortestCycle(graph, scc);
+      if (cycle) {
+        cycles.push(cycle);
+      }
     }
   }
 
@@ -353,7 +364,10 @@ function extractShortestCycle(
   const sccSet = new Set(scc);
   let shortest: string[] | null = null;
 
-  for (const start of scc) {
+  // Limit BFS search to first 100 nodes to avoid O(V*E) on huge SCCs
+  const searchNodes = scc.length > 100 ? scc.slice(0, 100) : scc;
+
+  for (const start of searchNodes) {
     const deps = graph.dependencies.get(start);
     if (!deps) continue;
 
@@ -564,18 +578,22 @@ export function getProjectOverview(
   };
 }
 
-async function collectFiles(dir: string): Promise<string[]> {
+const MAX_DIR_DEPTH = 50;
+
+async function collectFiles(dir: string, depth: number = 0): Promise<string[]> {
+  if (depth > MAX_DIR_DEPTH) return [];
+
   const files: string[] = [];
   const entries = await readdir(dir, { withFileTypes: true });
 
   for (const entry of entries) {
-    if (entry.name.startsWith(".") && IGNORE_DIRS.has(entry.name)) continue;
-    if (IGNORE_DIRS.has(entry.name)) continue;
+    if (entry.name.startsWith(".") || IGNORE_DIRS.has(entry.name)) continue;
+    if (entry.isSymbolicLink()) continue;
 
     const fullPath = join(dir, entry.name);
 
     if (entry.isDirectory()) {
-      const subFiles = await collectFiles(fullPath);
+      const subFiles = await collectFiles(fullPath, depth + 1);
       files.push(...subFiles);
     } else if (entry.isFile() && isSupportedFile(fullPath)) {
       files.push(fullPath);
