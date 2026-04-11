@@ -50,13 +50,24 @@ This MCP server scans your project, builds a dependency graph, and exposes it th
 
 ## Installation
 
-### Claude Code (CLI)
+### 1. Build from source (required)
+
+```bash
+git clone https://github.com/0xbyt4/codebase-graph-mcp.git
+cd codebase-graph-mcp
+npm install
+npm run build
+```
+
+### 2. Connect to your AI assistant
+
+#### Claude Code (CLI)
 
 ```bash
 claude mcp add -s user codebase-graph -- node /path/to/codebase-graph-mcp/build/index.js
 ```
 
-### Claude Code (manual config)
+#### Claude Code (manual config)
 
 Add to `~/.claude.json`:
 
