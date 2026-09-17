@@ -1,0 +1,10 @@
+{
+  // JSON5-style comment: parsed with json5, like tsc does
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "#helper": ["src/lib/helper.ts"]
+    }
+  }
+}
