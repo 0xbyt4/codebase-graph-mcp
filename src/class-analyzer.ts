@@ -16,7 +16,9 @@ export interface ClassHierarchy {
 
 // Match class definition - use greedy match up to ): to handle nested brackets
 const CLASS_PATTERN = /^class\s+(\w+)\s*(?:\((.*)\)\s*:)?/;
-const METHOD_PATTERN = /^\s{4}(?:async\s+)?def\s+(\w+)\s*\(/;
+// Applied to a line with its class-body indentation stripped, so only direct
+// methods match, never functions nested inside them.
+const METHOD_PATTERN = /^(?:async\s+)?def\s+(\w+)\s*\(/;
 
 /**
  * Parse base class names from the parenthesized string, handling nested generics.
@@ -109,6 +111,8 @@ function parseClassDefinitions(file: string, content: string): ClassInfo[] {
   const lines = content.split("\n");
 
   let currentClass: ClassInfo | null = null;
+  // Leading whitespace of the current class body (tabs, 2 or 4 spaces...)
+  let bodyIndent: string | null = null;
 
   for (const line of lines) {
     const classMatch = CLASS_PATTERN.exec(line.trimStart());
@@ -123,10 +127,11 @@ function parseClassDefinitions(file: string, content: string): ClassInfo[] {
       const bases = parseBases(basesStr);
 
       currentClass = { name, file, bases, methods: [] };
+      bodyIndent = null;
       continue;
     }
 
-    // Track methods inside current class (4-space indent)
+    // Track methods inside current class
     if (currentClass) {
       // End of class: non-empty line at indent 0 that's not a decorator
       if (
@@ -146,11 +151,17 @@ function parseClassDefinitions(file: string, content: string): ClassInfo[] {
           const basesStr = newClassMatch[2] || "";
           const bases = parseBases(basesStr);
           currentClass = { name, file, bases, methods: [] };
+          bodyIndent = null;
         }
         continue;
       }
 
-      const methodMatch = METHOD_PATTERN.exec(line);
+      if (!line.trim()) continue;
+      const indent = line.slice(0, line.length - line.trimStart().length);
+      if (bodyIndent === null) bodyIndent = indent;
+      if (indent !== bodyIndent) continue;
+
+      const methodMatch = METHOD_PATTERN.exec(line.slice(bodyIndent.length));
       if (methodMatch) {
         currentClass.methods.push(methodMatch[1]);
       }

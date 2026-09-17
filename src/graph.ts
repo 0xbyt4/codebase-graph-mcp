@@ -1,6 +1,8 @@
-import { readdir, stat } from "node:fs/promises";
-import { join, relative, extname } from "node:path";
-import { parseImports, readFileContent, isSupportedFile } from "./parser.js";
+import { readdir, lstat } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { join, relative, extname, sep } from "node:path";
+import { parseImports, readFileContent, isSupportedFile, clearParserCaches } from "./parser.js";
 import {
   parseConfigDependencies,
   type ConfigDependency,
@@ -21,21 +23,38 @@ const IGNORE_DIRS = new Set([
   "__pycache__",
   ".venv",
   "venv",
+  "env",
+  "site-packages",
+  "vendor",
+  "third_party",
+  "Pods",
   "dist",
   "build",
+  "out",
   "target",
   ".turbo",
   "coverage",
   ".cache",
 ]);
 
+// Hard ceiling on scanned files; beyond this the graph is too large to be
+// useful in a tool response and the scan would block the server for minutes.
+export const MAX_FILES = 50_000;
+
 export interface GraphData {
   // file -> files it depends on
   dependencies: Map<string, Set<string>>;
   // file -> files that depend on it
   dependents: Map<string, Set<string>>;
+  // "from\0to" for edges that only exist for the type checker
+  // (TS `import type`, Python `if TYPE_CHECKING:`); excluded from cycles
+  typeOnlyEdges: Set<string>;
+  // "from\0to" for Rust `mod name;` declarations; excluded from cycles
+  declarationEdges: Set<string>;
   // all tracked files
   files: Set<string>;
+  // true when collectFiles hit MAX_FILES and stopped early
+  truncated: boolean;
   // config -> Python module edges
   configDependencies: ConfigDependency[];
   // Cargo.toml cross-crate edges (Rust workspaces)
@@ -94,17 +113,32 @@ export interface PackageDependencyResult {
   totalCrossPackageEdges: number;
 }
 
+export function edgeKey(from: string, to: string): string {
+  return `${from}\0${to}`;
+}
+
+export function isTypeOnlyEdge(graph: GraphData, from: string, to: string): boolean {
+  return graph.typeOnlyEdges.has(edgeKey(from, to));
+}
+
 export async function buildGraph(projectRoot: string): Promise<GraphData> {
   const graph: GraphData = {
     dependencies: new Map(),
     dependents: new Map(),
+    typeOnlyEdges: new Set(),
+    declarationEdges: new Set(),
     files: new Set(),
+    truncated: false,
     configDependencies: [],
     cargoDependencies: [],
     classHierarchy: { classes: new Map(), subclasses: new Map(), fileClasses: new Map() },
   };
 
-  const allFiles = await collectFiles(projectRoot);
+  // tsconfig aliases may have changed since the last build
+  clearParserCaches();
+
+  const { files: allFiles, truncated } = await collectFiles(projectRoot);
+  graph.truncated = truncated;
 
   for (const filePath of allFiles) {
     graph.files.add(filePath);
@@ -115,8 +149,13 @@ export async function buildGraph(projectRoot: string): Promise<GraphData> {
     const deps = new Set<string>();
 
     for (const imp of imports) {
-      if (!imp.resolved) continue;
+      if (!imp.resolved || imp.resolved === filePath) continue;
 
+      // An edge is type-only unless at least one value import targets it.
+      const key = edgeKey(filePath, imp.resolved);
+      if (!imp.typeOnly) graph.typeOnlyEdges.delete(key);
+      else if (!deps.has(imp.resolved)) graph.typeOnlyEdges.add(key);
+      if (imp.declaration) graph.declarationEdges.add(key);
       deps.add(imp.resolved);
 
       // Build reverse index
@@ -276,9 +315,24 @@ export function getMultiFileImpact(
   };
 }
 
+// Edges that can form a real cycle: tracked files, excluding type-only
+// imports and Rust module declarations.
+function runtimeDeps(graph: GraphData, file: string): string[] {
+  const deps = graph.dependencies.get(file);
+  if (!deps) return [];
+  const out: string[] = [];
+  for (const dep of deps) {
+    const key = edgeKey(file, dep);
+    if (graph.files.has(dep) && !graph.typeOnlyEdges.has(key) && !graph.declarationEdges.has(key)) out.push(dep);
+  }
+  return out;
+}
+
 /**
- * Detect circular dependencies using Tarjan's SCC algorithm.
- * Returns SCCs with size > 1 (which contain cycles).
+ * Detect circular dependencies using Tarjan's SCC algorithm (iterative, so
+ * deep import chains cannot overflow the call stack). Type-only imports are
+ * ignored: they are the standard way to break a runtime cycle.
+ * Each reported cycle lists every file once, in import order.
  */
 export function detectCycles(graph: GraphData): CycleResult {
   let index = 0;
@@ -288,43 +342,51 @@ export function detectCycles(graph: GraphData): CycleResult {
   const lowlinks = new Map<string, number>();
   const sccs: string[][] = [];
 
-  function strongConnect(v: string): void {
-    indices.set(v, index);
-    lowlinks.set(v, index);
-    index++;
-    stack.push(v);
-    onStack.add(v);
+  function strongConnect(root: string): void {
+    // Explicit DFS stack: node plus its position in its dependency list.
+    const work: { v: string; deps: string[]; i: number }[] = [];
+    const push = (v: string) => {
+      indices.set(v, index);
+      lowlinks.set(v, index);
+      index++;
+      stack.push(v);
+      onStack.add(v);
+      work.push({ v, deps: runtimeDeps(graph, v), i: 0 });
+    };
+    push(root);
 
-    const deps = graph.dependencies.get(v);
-    if (deps) {
-      for (const w of deps) {
-        if (!graph.files.has(w)) continue; // skip external
+    while (work.length > 0) {
+      const frame = work[work.length - 1];
+      if (frame.i < frame.deps.length) {
+        const w = frame.deps[frame.i++];
         if (!indices.has(w)) {
-          strongConnect(w);
-          lowlinks.set(v, Math.min(lowlinks.get(v)!, lowlinks.get(w)!));
+          push(w);
         } else if (onStack.has(w)) {
-          lowlinks.set(v, Math.min(lowlinks.get(v)!, indices.get(w)!));
+          lowlinks.set(frame.v, Math.min(lowlinks.get(frame.v)!, indices.get(w)!));
         }
+        continue;
       }
-    }
 
-    // Root of SCC
-    if (lowlinks.get(v) === indices.get(v)) {
-      const scc: string[] = [];
-      let w: string;
-      do {
-        w = stack.pop()!;
-        onStack.delete(w);
-        scc.push(w);
-      } while (w !== v);
+      work.pop();
+      const { v } = frame;
+      if (work.length > 0) {
+        const parent = work[work.length - 1].v;
+        lowlinks.set(parent, Math.min(lowlinks.get(parent)!, lowlinks.get(v)!));
+      }
 
-      if (scc.length > 1) {
-        sccs.push(scc.reverse());
-      } else if (scc.length === 1) {
-        // Check for self-loop (file imports itself)
-        const file = scc[0];
-        const deps = graph.dependencies.get(file);
-        if (deps?.has(file)) {
+      if (lowlinks.get(v) === indices.get(v)) {
+        const scc: string[] = [];
+        let w: string;
+        do {
+          w = stack.pop()!;
+          onStack.delete(w);
+          scc.push(w);
+        } while (w !== v);
+
+        if (scc.length > 1) {
+          sccs.push(scc.reverse());
+        } else if (frame.deps.includes(v)) {
+          // A file that imports itself
           sccs.push(scc);
         }
       }
@@ -332,23 +394,14 @@ export function detectCycles(graph: GraphData): CycleResult {
   }
 
   for (const file of graph.files) {
-    if (!indices.has(file)) {
-      strongConnect(file);
-    }
+    if (!indices.has(file)) strongConnect(file);
   }
 
   // Extract shortest cycle from each SCC (limit to 20)
   const cycles: string[][] = [];
   for (const scc of sccs.slice(0, 20)) {
-    if (scc.length === 1) {
-      // Self-loop: report as [file, file]
-      cycles.push([scc[0], scc[0]]);
-    } else {
-      const cycle = extractShortestCycle(graph, scc);
-      if (cycle) {
-        cycles.push(cycle);
-      }
-    }
+    const cycle = scc.length === 1 ? [scc[0]] : extractShortestCycle(graph, scc);
+    if (cycle) cycles.push(cycle);
   }
 
   return { cycles, totalCycles: sccs.length };
@@ -356,6 +409,7 @@ export function detectCycles(graph: GraphData): CycleResult {
 
 /**
  * Extract the shortest cycle from an SCC by doing BFS from each node.
+ * The result contains each file once; the last file imports the first.
  */
 function extractShortestCycle(
   graph: GraphData,
@@ -364,15 +418,13 @@ function extractShortestCycle(
   const sccSet = new Set(scc);
   let shortest: string[] | null = null;
 
-  // Limit BFS search to first 100 nodes to avoid O(V*E) on huge SCCs
-  const searchNodes = scc.length > 100 ? scc.slice(0, 100) : scc;
+  // Limit BFS starts on huge SCCs to avoid O(V*E)
+  const starts = scc.length > 1000 ? 5 : scc.length > 100 ? 20 : scc.length;
+  const searchNodes = scc.slice(0, starts);
 
   for (const start of searchNodes) {
-    const deps = graph.dependencies.get(start);
-    if (!deps) continue;
-
-    for (const next of deps) {
-      if (!sccSet.has(next)) continue;
+    for (const next of runtimeDeps(graph, start)) {
+      if (!sccSet.has(next) || next === start) continue;
 
       // BFS from next back to start within the SCC
       const path = bfsPath(graph, next, start, sccSet);
@@ -391,30 +443,30 @@ function extractShortestCycle(
   return shortest;
 }
 
+// Shortest path from `from` to a direct importer of `to`, so the returned
+// list ends right before `to` and can be appended to a cycle head.
 function bfsPath(
   graph: GraphData,
   from: string,
   to: string,
   within: Set<string>,
 ): string[] | null {
-  if (from === to) return [to];
+  const parent = new Map<string, string | null>([[from, null]]);
+  const queue = [from];
+  let head = 0;
 
-  const queue: { node: string; path: string[] }[] = [
-    { node: from, path: [from] },
-  ];
-  const visited = new Set<string>([from]);
-
-  while (queue.length > 0) {
-    const { node, path } = queue.shift()!;
-    const deps = graph.dependencies.get(node);
-    if (!deps) continue;
-
-    for (const next of deps) {
+  while (head < queue.length) {
+    const node = queue[head++];
+    for (const next of runtimeDeps(graph, node)) {
       if (!within.has(next)) continue;
-      if (next === to) return [...path, to];
-      if (visited.has(next)) continue;
-      visited.add(next);
-      queue.push({ node: next, path: [...path, next] });
+      if (next === to) {
+        const path: string[] = [];
+        for (let cur: string | null = node; cur !== null; cur = parent.get(cur) ?? null) path.push(cur);
+        return path.reverse();
+      }
+      if (parent.has(next)) continue;
+      parent.set(next, node);
+      queue.push(next);
     }
   }
 
@@ -579,26 +631,123 @@ export function getProjectOverview(
 }
 
 const MAX_DIR_DEPTH = 50;
+const execFileAsync = promisify(execFile);
 
-async function collectFiles(dir: string, depth: number = 0): Promise<string[]> {
-  if (depth > MAX_DIR_DEPTH) return [];
+interface CollectResult {
+  files: string[];
+  truncated: boolean;
+}
+
+/**
+ * Enumerate source files under the root. Inside a git repository the list
+ * comes from `git ls-files`, so .gitignore is honoured (virtualenvs, vendored
+ * bundles, generated code). Elsewhere the tree is walked with a fixed ignore
+ * list. Symlinks are never followed.
+ */
+export async function collectFiles(root: string): Promise<CollectResult> {
+  // An empty git listing means the root itself is ignored by an enclosing
+  // repository; the walk is the better answer then.
+  const fromGit = await collectFromGit(root);
+  if (fromGit && fromGit.files.length > 0) return fromGit;
 
   const files: string[] = [];
-  const entries = await readdir(dir, { withFileTypes: true });
+  await walkDirectory(root, 0, files);
+  return { files, truncated: files.length >= MAX_FILES };
+}
+
+// Git has already vetted tracked paths, so only directories that are never
+// source are filtered out of its listing.
+const GIT_IGNORE_DIRS = new Set(["node_modules", "__pycache__", ".git"]);
+
+async function gitListFiles(root: string, args: string[]): Promise<string[]> {
+  const { stdout } = await execFileAsync("git", ["ls-files", "-z", ...args], {
+    cwd: root,
+    encoding: "utf-8",
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: 60_000,
+  });
+  return stdout.split("\0").filter(Boolean);
+}
+
+async function collectFromGit(root: string): Promise<CollectResult | null> {
+  let tracked: string[];
+  let others: string[];
+  try {
+    // Submodule contents are part of the project; fall back for git versions
+    // or checkouts where recursion is not possible.
+    tracked = await gitListFiles(root, ["--cached", "--recurse-submodules"]).catch(() =>
+      gitListFiles(root, ["--cached"]),
+    );
+    others = await gitListFiles(root, ["--others", "--exclude-standard"]);
+  } catch {
+    return null; // not a repository, or git missing
+  }
+
+  const files: string[] = [];
+  const seen = new Set<string>();
+  // Tracked paths were vetted by whoever committed them; untracked ones get
+  // the same ignore list as a plain directory walk (a stray venv, build dir).
+  const add = async (rel: string, ignore: Set<string>) => {
+    if (!isSupportedFile(rel)) return;
+    if (rel.split("/").some((seg) => ignore.has(seg))) return;
+    const fullPath = join(root, rel.split("/").join(sep));
+    if (seen.has(fullPath)) return;
+    seen.add(fullPath);
+    try {
+      const info = await lstat(fullPath);
+      if (info.isFile()) files.push(fullPath);
+    } catch {
+      // listed but deleted in the working tree
+    }
+  };
+
+  for (const rel of tracked) {
+    if (files.length >= MAX_FILES) return { files, truncated: true };
+    await add(rel, GIT_IGNORE_DIRS);
+  }
+  for (const rel of others) {
+    if (files.length >= MAX_FILES) return { files, truncated: true };
+    if (rel.endsWith("/")) {
+      // An untracked nested repository is listed as a bare directory; walk it.
+      if (rel.split("/").some((seg) => IGNORE_DIRS.has(seg))) continue;
+      const nested = join(root, rel.slice(0, -1).split("/").join(sep));
+      const nestedFiles: string[] = [];
+      await walkDirectory(nested, 0, nestedFiles);
+      for (const f of nestedFiles) {
+        if (!seen.has(f)) {
+          seen.add(f);
+          files.push(f);
+        }
+      }
+      continue;
+    }
+    await add(rel, IGNORE_DIRS);
+  }
+  return { files, truncated: files.length >= MAX_FILES };
+}
+
+async function walkDirectory(dir: string, depth: number, files: string[]): Promise<void> {
+  if (depth > MAX_DIR_DEPTH || files.length >= MAX_FILES) return;
+
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    // Unreadable directory: skip it instead of failing the whole scan
+    console.error(`codebase-graph: skipping ${dir}: ${(error as Error).message}`);
+    return;
+  }
 
   for (const entry of entries) {
+    if (files.length >= MAX_FILES) return;
     if (entry.name.startsWith(".") || IGNORE_DIRS.has(entry.name)) continue;
     if (entry.isSymbolicLink()) continue;
 
     const fullPath = join(dir, entry.name);
-
     if (entry.isDirectory()) {
-      const subFiles = await collectFiles(fullPath, depth + 1);
-      files.push(...subFiles);
+      await walkDirectory(fullPath, depth + 1, files);
     } else if (entry.isFile() && isSupportedFile(fullPath)) {
       files.push(fullPath);
     }
   }
-
-  return files;
 }
