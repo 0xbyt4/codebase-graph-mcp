@@ -28,10 +28,12 @@ Scans source files (Python, TypeScript, JavaScript, Rust), parses import/export 
 
 ## Supported Languages
 
-- Python (.py)
-- TypeScript / JavaScript (.ts, .tsx, .js, .jsx, .mjs, .cjs)
+- Python (.py): absolute/relative imports, submodule imports, TYPE_CHECKING imports tracked as type-only
+- TypeScript / JavaScript (.ts, .tsx, .mts, .cts, .js, .jsx, .mjs, .cjs): multi-line and `import type` forms, tsconfig/jsconfig `paths` aliases
 - Rust (.rs) with Cargo.toml workspace parsing
-- Config files (.json, .json5) for module references
+- Config files (.json, .json5 under config/) in the OpenMind OM1 layout only
+
+Type-only imports and Rust `mod` declarations never count as circular dependencies. File lists come from `git ls-files` inside a repository, so `.gitignore` is honoured. File arguments must stay inside the project root.
 
 ## Installation
 
@@ -70,8 +72,9 @@ All tools accept an optional `project_root` parameter. Resolution order:
 
 ### visualize_graph
 - `top` (number, default 40) — number of top most-imported files to include
-- `scope` (string) — directory filter (e.g. "gateway", "agent", "tools")
-- `output` (string) — output HTML file path
+- `scope` (string) — directory filter applied before ranking (e.g. "gateway", "src/agent")
+- `output` (string) — output HTML file path, inside the project root
+- `open_browser` (boolean, default true) — open the file with the system browser
 - `project_root` (string) — absolute path to project root
 
 ### multi_file_impact

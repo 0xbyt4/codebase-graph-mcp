@@ -42,11 +42,13 @@ This MCP server scans your project, builds a dependency graph, and exposes it th
 
 ## Supported Languages
 
-- **TypeScript / JavaScript** (`.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`)
-- **Python** (`.py`)
-- **Rust** (`.rs`) — `use crate::`, `use super::`, `use self::`, `mod`/`pub mod` declarations, glob imports, multi-line `use` with braces
+- **TypeScript / JavaScript** (`.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`) — static, side-effect, dynamic and `require()` imports, multi-line and `import type` forms, `.js` -> `.ts` ESM rewrites, index files, `tsconfig.json`/`jsconfig.json` `paths` and `baseUrl` (including `extends`)
+- **Python** (`.py`) — absolute and relative imports, `from pkg import submodule`, parenthesized multi-line imports, namespace packages, imports under `if TYPE_CHECKING:` (tracked as type-only)
+- **Rust** (`.rs`) — `use crate::`, `use super::`, `use self::`, `mod`/`pub mod` declarations, glob and brace-group imports, items defined in the parent module file, nearest `Cargo.toml` decides what `crate::` means
 - **Cargo.toml** — workspace cross-crate dependency parsing (resolves `[workspace.dependencies]` path mappings)
-- **Config files** (`.json`, `.json5`) — parsed for module references
+- **Config files** (`.json`, `.json5` under `config/`) — module references in the [OpenMind OM1](https://github.com/OpenmindAGI/OM1) config layout only; other projects get no config edges
+
+Type-only imports (TS `import type`, Python `TYPE_CHECKING`) and Rust `mod` declarations are kept as dependencies but never count as circular dependencies, since they are the standard ways to break a runtime cycle.
 
 ## Installation
 
@@ -57,7 +59,10 @@ git clone https://github.com/0xbyt4/codebase-graph-mcp.git
 cd codebase-graph-mcp
 npm install
 npm run build
+npm test   # optional: fixture-based tests, needs git on PATH
 ```
+
+Requires Node.js 18+. `git` is used for the history tools and, inside a repository, for the file list (so `.gitignore` is honoured). Outside a repository the tree is walked with a built-in ignore list (`node_modules`, `.git`, `dist`, `build`, `target`, `venv`, `env`, `vendor`, ...).
 
 ### 2. Connect to your AI assistant
 
@@ -94,6 +99,10 @@ All tools accept an optional `project_root` parameter. Resolution order:
 2. `PROJECT_ROOT` environment variable (if set)
 3. Current working directory (default)
 
+File arguments must stay inside the project root; anything that resolves outside it (including through a symlink) is rejected. A file the scan never saw is reported as an error rather than as "unused". `visualize_graph` only writes `.html` files and never overwrites a file it did not generate. Scans stop at 50,000 files and say so in the output.
+
+Note that `project_root` itself is chosen by the caller: the server will read (and, for `visualize_graph`, write one HTML file into) any directory the process user can access. Set `PROJECT_ROOT` and drop the parameter if the assistant should be limited to one project.
+
 ## Example Output
 
 ### impact_analysis
@@ -127,6 +136,8 @@ Cycle 2 (2 files):
   src/utils/x.py -> src/utils/y.py -> src/utils/x.py
 ```
 
+Each file is listed once; the trailing entry closes the loop. A cycle that only exists through `import type` / `TYPE_CHECKING` imports is not reported.
+
 ### class_hierarchy
 
 ```
@@ -157,11 +168,11 @@ Subclasses (4):
 ```
 File churn (last 90 days, 234 commits):
 
-File                                                         Commits  Last Changed
-──────────────────────────────────────────────────────────── ──────── ────────────
-src/providers/io_provider.py                                       18   2026-02-15
-src/actions/move/connector/ros2.py                                 14   2026-02-10
-src/runtime/config.py                                              12   2026-02-18
+File                                                     Commits      First       Last
+──────────────────────────────────────────────────────── ─────── ────────── ──────────
+src/providers/io_provider.py                                  18 2025-12-02 2026-02-15
+src/actions/move/connector/ros2.py                            14 2025-12-14 2026-02-10
+src/runtime/config.py                                         12 2026-01-05 2026-02-18
 ```
 
 ### co_change
@@ -178,17 +189,17 @@ src/runtime/config.py                                          5     12  0.42
 
 ### visualize_graph
 
-Generates an interactive HTML graph and opens it in the browser. Nodes are colored by directory, sized by import count. Drag, zoom, hover for details.
+Generates an interactive HTML graph and opens it in the browser. Nodes are colored by top-level directory, sized by import count. Drag, zoom, hover for details. The page loads a pinned vis-network build from jsDelivr with an integrity hash, so it needs network access when opened.
 
 ```
 # All files (top 50)
 visualize_graph(top=50)
 
-# Only gateway-related files
+# Only files under gateway/, ranked within that scope
 visualize_graph(scope="gateway", top=30)
 
-# Custom output path
-visualize_graph(output="/tmp/my_graph.html")
+# Custom output path (must be inside the project root); skip the browser
+visualize_graph(output="docs/graph.html", open_browser=false)
 ```
 
 Output:
@@ -224,21 +235,21 @@ src/actions (82 files)
 
 ## How It Works
 
-1. Scans all supported files in the project (skips `node_modules`, `.git`, `build`, `target`, `__pycache__`, etc.)
+1. Lists source files: `git ls-files` inside a repository (honours `.gitignore`), otherwise a directory walk with a built-in ignore list. Symlinks are never followed; unreadable directories are skipped; files over 1 MB and lines over 5,000 characters are treated as generated and not parsed.
 2. Parses import/export statements using regex (zero external parser dependencies)
 3. Resolves relative and absolute imports to actual files
-   - TypeScript: handles `.js` -> `.ts` ESM convention, index files, path aliases
-   - Python: handles relative imports (`from .module`) and absolute project imports (`from runtime.config`)
-   - Rust: handles `crate::`, `super::`, `self::` paths, `mod`/`pub mod` declarations, `mod.rs`/`lib.rs`/`main.rs` module resolution
-4. Builds an adjacency list graph (dependencies + reverse dependencies)
-5. Parses config files for module references (e.g., JSON configs pointing to Python modules)
+   - TypeScript: `.js` -> `.ts` ESM convention, index files, `tsconfig`/`jsconfig` `paths` and `baseUrl`
+   - Python: relative imports, absolute project imports from `src/`, `lib/`, `app/`, the root, or any ancestor of the importing file; `from pkg import name` resolves `name` as a submodule when it is one
+   - Rust: `crate::` (nearest `Cargo.toml`), `super::`, `self::`, `mod` declarations, `mod.rs`/`lib.rs`/`main.rs`; items that live in the parent module file resolve to that file
+4. Builds an adjacency list graph (dependencies + reverse dependencies), flagging type-only edges and Rust `mod` declarations
+5. Parses OM1-style config files for module references
 6. Parses `Cargo.toml` workspace for cross-crate dependency edges (maps `[workspace.dependencies]` path entries to crate entry points)
 7. Builds class inheritance hierarchy from Python files
-8. Caches the graph in memory per project root, refresh with `refresh_graph`
+8. Caches the graph in memory per project root for 5 minutes, refresh with `refresh_graph`
 
 ## Design Principles
 
-- **Zero runtime dependencies** beyond the MCP SDK
+- **Minimal runtime dependencies**: the MCP SDK, zod and json5
 - **Regex-based parsing** — no AST parsers, no native binaries, instant startup
 - **Works offline** — no API calls, no cloud services
 - **Multi-project support** — cache per project root, switch between projects freely
@@ -254,7 +265,11 @@ src/
   class-analyzer.ts  -> Python class hierarchy extraction
   config-parser.ts   -> Config file module reference parser
   cargo-parser.ts    -> Cargo.toml workspace cross-crate dependency parser
-  git-history.ts     -> Git log analysis (churn + co-change)
+  git-history.ts     -> Git log analysis (churn + co-change), git ref validation
+  paths.ts           -> Project root normalization and path containment checks
+test/
+  fixtures/          -> Small TypeScript, Python and Rust projects the tests run against
+  *.test.mjs         -> node:test suites (parser, graph, git, paths, end-to-end server)
 ```
 
 ## License
