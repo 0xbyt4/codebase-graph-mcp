@@ -1,6 +1,6 @@
 {
   "name": "codebase-graph-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server that builds a codebase dependency graph for AI coding assistants",
   "type": "module",
   "bin": {
@@ -22,12 +22,17 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "json5": "^2.2.3",
     "zod": "^3.25.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
-  }
+  },
+  "files": [
+    "build",
+    "README.md",
+    "llms.txt"
+  ]
 }
