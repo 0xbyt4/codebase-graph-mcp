@@ -1,5 +1,10 @@
-<img alt="Dependency graph of one package: node size is the number of importers, red edges join files that import each other" src="docs/graph.png" />
 # codebase-graph-mcp
+
+<img alt="Atlas home page for hermes-agent: project totals, a card per directory with its most imported files" src="docs/atlas.png" />
+
+<img alt="Live pulse on hermes-agent: files glow as their code runs and signals travel along the import edges" src="docs/pulse.gif" />
+
+*Example: [hermes-agent](https://github.com/NousResearch/hermes-agent), about 9,500 source files. Top: the atlas home page. Bottom: live pulse while its modules load.*
 
 An MCP server that builds a dependency graph of your codebase, enabling AI coding assistants to understand project structure and make safer changes.
 
@@ -236,6 +241,8 @@ src/runtime/config.py                                          5     12  0.42
 
 ### visualize_graph
 
+<img alt="Dependency graph of one package: node size is the number of importers, red edges join files that import each other" src="docs/graph.png" />
+
 Generates an interactive HTML graph and opens it in the browser.
 
 - **Size** of a node is the number of files importing it; label size follows, so hubs stay readable when zoomed out
@@ -265,8 +272,6 @@ visualize_graph(atlas=true, scope="apps/desktop/src", max_scopes=5, output="tmp/
 ```
 
 #### Atlas mode
-
-<img alt="Atlas index: project totals, a card per directory with its most imported files, hotspots and cycle groups" src="docs/atlas.png" />
 
 On a large project one graph is not enough, so `atlas=true` writes a folder (default `codebase_atlas/`):
 
@@ -308,8 +313,6 @@ src/actions (82 files)
 ```
 
 ## Live Pulse
-
-<img alt="Live pulse: executing files glow and signals travel along the import edges" src="docs/pulse.png" />
 
 The graph pages can show a running Python program: the files it is executing glow, signals travel along the import edges from caller to callee, and a file where a thread or an asyncio task is parked (network wait, sleep, lock) breathes slowly. On the atlas index the card of the directory that is executing lights up. A status line names the current file even when it is not among the nodes shown.
 
