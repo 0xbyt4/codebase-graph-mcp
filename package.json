@@ -19,6 +19,15 @@
     "claude"
   ],
   "license": "MIT",
+  "author": "0xbyt4",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xbyt4/codebase-graph-mcp.git"
+  },
+  "homepage": "https://github.com/0xbyt4/codebase-graph-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/0xbyt4/codebase-graph-mcp/issues"
+  },
   "engines": {
     "node": ">=18"
   },
@@ -35,6 +44,7 @@
     "build",
     "pulse",
     "README.md",
-    "llms.txt"
+    "llms.txt",
+    "LICENSE"
   ]
 }
