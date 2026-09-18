@@ -35,7 +35,7 @@ import {
 
 const server = new McpServer({
   name: "codebase-graph",
-  version: "0.2.0",
+  version: "0.3.0",
 });
 
 // Cache: supports multiple project roots

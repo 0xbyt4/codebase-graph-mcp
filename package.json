@@ -1,6 +1,6 @@
 {
   "name": "codebase-graph-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP server that builds a codebase dependency graph for AI coding assistants",
   "type": "module",
   "bin": {
