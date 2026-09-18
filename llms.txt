@@ -74,7 +74,9 @@ All tools accept an optional `project_root` parameter. Resolution order:
 - `top` (number, default 40) — number of top most-imported files to include
 - `scope` (string) — directory filter applied before ranking (e.g. "gateway", "src/agent")
 - `output` (string) — output HTML file path, inside the project root
-- `open_browser` (boolean, default true) — open the file with the system browser
+- `open_browser` (boolean, default true) — open the file (the index in atlas mode) with the system browser
+- `atlas` (boolean, default false) — write a folder instead of one file: index.html with totals, hotspots and cycles, all.html, and one graph per major directory ranked by how often it is imported; `output` is then a directory (default codebase_atlas), `scope` selects whose subdirectories get a graph
+- `max_scopes` (number, default 8, max 20) — atlas mode: how many directories get their own graph
 - `project_root` (string) — absolute path to project root
 
 ### multi_file_impact
@@ -104,6 +106,8 @@ src/
   config-parser.ts   — config file module reference parser
   cargo-parser.ts    — Cargo.toml workspace cross-crate dependency parser
   git-history.ts     — git log analysis (churn + co-change)
+  paths.ts           — project root normalization and path containment checks
+  visualize.ts       — HTML graph pages, atlas directory selection and index page
 ```
 
 ## Design

@@ -189,7 +189,16 @@ src/runtime/config.py                                          5     12  0.42
 
 ### visualize_graph
 
-Generates an interactive HTML graph and opens it in the browser. Nodes are colored by top-level directory, sized by import count. Drag, zoom, hover for details. The page loads a pinned vis-network build from jsDelivr with an integrity hash, so it needs network access when opened.
+Generates an interactive HTML graph and opens it in the browser.
+
+- **Size** of a node is the number of files importing it; label size follows, so hubs stay readable when zoomed out
+- **Color** is the directory below the scope, from a fixed 8-color palette validated for color-blind separation on light and dark surfaces (more directories fold into "Other")
+- **Red double-headed edges** join two files that import each other at runtime, the smallest and most fixable kind of cycle
+- Click a file to isolate its neighbours, use the search box to jump to a file, hover for the full path and counts
+- The layout is computed once and then held still so labels stay readable; the **Live layout** button turns the physics back on, so dragging a file pulls its cluster along, and freezes it again on the next click
+- A table view under the graph lists every file with the same numbers, and the page follows the OS light or dark theme
+
+The page loads a pinned vis-network build from jsDelivr with an integrity hash, so it needs network access when opened.
 
 ```
 # All files (top 50)
@@ -200,7 +209,23 @@ visualize_graph(scope="gateway", top=30)
 
 # Custom output path (must be inside the project root); skip the browser
 visualize_graph(output="docs/graph.html", open_browser=false)
+
+# Atlas: a folder with an index page, a whole-project graph and one graph per major directory
+visualize_graph(atlas=true)
+
+# Atlas of one area: a graph per subdirectory of apps/desktop/src, at most 5 of them
+visualize_graph(atlas=true, scope="apps/desktop/src", max_scopes=5, output="tmp/desktop-atlas")
 ```
+
+#### Atlas mode
+
+On a large project one graph is not enough, so `atlas=true` writes a folder (default `codebase_atlas/`):
+
+- `index.html` with project totals, a card per graph (its five most imported files as a bar list), the ten most imported files overall, and every cycle group with its size and shortest loop
+- `all.html` for the whole project (twice `top` files)
+- one page per major directory, named after it (`gateway.html`, `apps_desktop_src.html`)
+
+Directories are direct children of the project root (or of `scope`), ranked by how often their files are imported, so test-only and leaf directories drop out on their own; `max_scopes` (default 8, max 20) caps how many get a page. Only the index is opened in the browser, every page links back to it, and as with single graphs nothing is overwritten unless this tool generated it.
 
 Output:
 ```
@@ -267,6 +292,7 @@ src/
   cargo-parser.ts    -> Cargo.toml workspace cross-crate dependency parser
   git-history.ts     -> Git log analysis (churn + co-change), git ref validation
   paths.ts           -> Project root normalization and path containment checks
+  visualize.ts       -> HTML graph pages, atlas directory selection and index page
 test/
   fixtures/          -> Small TypeScript, Python and Rust projects the tests run against
   *.test.mjs         -> node:test suites (parser, graph, git, paths, end-to-end server)

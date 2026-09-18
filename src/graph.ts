@@ -127,6 +127,13 @@ export function isTypeOnlyEdge(graph: GraphData, from: string, to: string): bool
   return graph.typeOnlyEdges.has(edgeKey(from, to));
 }
 
+/** True when `from` imports `to` in a way that exists at runtime (not type-only, not a Rust mod declaration). */
+export function isRuntimeEdge(graph: GraphData, from: string, to: string): boolean {
+  if (!graph.dependencies.get(from)?.has(to)) return false;
+  const key = edgeKey(from, to);
+  return !graph.typeOnlyEdges.has(key) && !graph.declarationEdges.has(key);
+}
+
 export async function buildGraph(projectRoot: string): Promise<GraphData> {
   const graph: GraphData = {
     dependencies: new Map(),
