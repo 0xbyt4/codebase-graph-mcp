@@ -7,6 +7,7 @@ import { resolve, relative, join } from "node:path";
 import { writeFile, readFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import {
   buildGraph,
   getDependencies,
@@ -749,8 +750,12 @@ server.registerTool(
 
         const indexPath = join(outDir, "index.html");
         const list = entries.map((e) => `  ${e.href.padEnd(28)} ${e.title} (${e.page.nodeCount} nodes, ${e.page.edgeCount} edges)`).join("\n");
+        const pulseHint =
+          `Live pulse (Python programs): run the program through the sampler and the pages light up where it executes.\n` +
+          `  python ${PULSE_SCRIPT} --root ${root} --pages ${outDir} --open -m your.module\n` +
+          `  (use -c package.module:function for a console-script entry point, or pass a script path)`;
         return textResult(
-          `Atlas saved to ${outDir}\n\n  index.html\n${list}\n\n${await openNote(indexPath)}${truncationNote(graph)}`,
+          `Atlas saved to ${outDir}\n\n  index.html\n${list}\n\n${await openNote(indexPath)}${truncationNote(graph)}\n\n${pulseHint}`,
         );
       }
 
@@ -775,6 +780,9 @@ server.registerTool(
     }
   },
 );
+
+// The sampler that feeds live "pulse" mode ships next to the build output.
+const PULSE_SCRIPT = fileURLToPath(new URL("../pulse/codebase_pulse.py", import.meta.url));
 
 // visualize_graph only ever replaces files it generated itself.
 async function assertOverwritable(path: string): Promise<void> {

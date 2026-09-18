@@ -33,6 +33,7 @@
   },
   "files": [
     "build",
+    "pulse",
     "README.md",
     "llms.txt"
   ]

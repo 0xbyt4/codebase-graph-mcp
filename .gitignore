@@ -3,3 +3,5 @@ build/
 *.tsbuildinfo
 .DS_Store
 codebase_graph.html
+__pycache__/
+*.pyc
