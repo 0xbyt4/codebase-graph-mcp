@@ -1,4 +1,4 @@
-<img width="842" height="653" alt="Screenshot 2026-04-11 at 01 55 02" src="https://github.com/user-attachments/assets/f4e8d55e-2121-46b1-912d-9133090a3086" />
+<img alt="Dependency graph of one package: node size is the number of importers, red edges join files that import each other" src="docs/graph.png" />
 # codebase-graph-mcp
 
 An MCP server that builds a dependency graph of your codebase, enabling AI coding assistants to understand project structure and make safer changes.
@@ -9,7 +9,7 @@ AI coding assistants read files one at a time. They don't know which files depen
 
 ## Solution
 
-This MCP server scans your project, builds a dependency graph, and exposes it through 12 tools covering dependency analysis, impact prediction, architecture visualization, interactive graph generation, and git history insights.
+This MCP server scans your project, builds a dependency graph, and exposes it through 12 tools covering dependency analysis, impact prediction, cycle detection, git history insights and interactive visualization: single graphs, a whole-project atlas, and a live pulse mode that lights up the files a running Python program is executing.
 
 ## Tools
 
@@ -31,7 +31,7 @@ This MCP server scans your project, builds a dependency graph, and exposes it th
 | `detect_cycles` | Find circular dependencies using Tarjan's SCC algorithm |
 | `package_dependencies` | Package/module level dependency view with configurable depth |
 | `class_hierarchy` | Python class inheritance tree, methods, and subclass overrides |
-| `visualize_graph` | Generate interactive HTML dependency graph, opens in browser |
+| `visualize_graph` | Interactive HTML graph, or with `atlas=true` a folder with an index and a graph per major directory; the pages go live under the pulse sampler |
 
 ### Git History
 
@@ -39,6 +39,41 @@ This MCP server scans your project, builds a dependency graph, and exposes it th
 |------|-------------|
 | `file_churn` | Most frequently changed files in git history (hotspot detection) |
 | `co_change` | Files that frequently change together (hidden coupling detection) |
+
+## Asking Your Assistant
+
+Once connected there is nothing to learn: ask in plain language and the assistant picks the tool.
+
+| You ask | Tool used |
+|---|---|
+| "What breaks if I change `src/auth/session.ts`?" | `impact_analysis` |
+| "Who imports `config.py`?" | `get_dependents` |
+| "I changed these files since `main`, what should I re-test?" | `multi_file_impact` with `diff_ref` |
+| "Are there circular imports? How bad are they?" | `detect_cycles` |
+| "Which files are the riskiest to touch?" | `project_overview` + `file_churn` |
+| "What usually changes together with `run.py`?" | `co_change` |
+| "Which classes override `connect`?" | `class_hierarchy` |
+| "Draw this project" / "make an atlas of `apps/desktop/src`" | `visualize_graph` |
+
+A good habit for coding agents: call `impact_analysis` before editing a widely imported file and `multi_file_impact` before declaring a change done.
+
+## Resources and Prompts
+
+Besides the tools the server exposes three MCP resources, read against `PROJECT_ROOT` (or the working directory):
+
+| Resource | Content |
+|---|---|
+| `codebase://overview` | File counts, most imported files, entry points, orphans (JSON) |
+| `codebase://graph` | The full adjacency list: each file with its dependencies and dependents (JSON) |
+| `codebase://cycles` | Cycle groups with their sizes and shortest loops (JSON) |
+
+and three prompts that pre-fill a request with graph data:
+
+| Prompt | Argument | Asks the model to |
+|---|---|---|
+| `analyze-impact` | `file` | Assess the risk of changing one file, given its dependencies, dependents and blast radius |
+| `find-hotspots` | none | Rank the riskiest files from import counts and 90-day churn |
+| `review-pr` | `diff_ref` | Review the files changed since a git ref together with everything they affect |
 
 ## Supported Languages
 
@@ -90,6 +125,18 @@ Add to `~/.claude.json`:
   }
 }
 ```
+
+#### Hermes Agent (`config.yaml`)
+
+```yaml
+mcp_servers:
+  codebase-graph:
+    command: "node"
+    args: ["/path/to/codebase-graph-mcp/build/index.js"]
+    env: {}
+```
+
+Any other MCP client works the same way: a stdio server started with `node build/index.js`.
 
 ### Project Root Resolution
 
@@ -219,6 +266,8 @@ visualize_graph(atlas=true, scope="apps/desktop/src", max_scopes=5, output="tmp/
 
 #### Atlas mode
 
+<img alt="Atlas index: project totals, a card per directory with its most imported files, hotspots and cycle groups" src="docs/atlas.png" />
+
 On a large project one graph is not enough, so `atlas=true` writes a folder (default `codebase_atlas/`):
 
 - `index.html` with project totals, a card per graph (its five most imported files as a bar list), the ten most imported files overall, and every cycle group with its size and shortest loop
@@ -258,6 +307,27 @@ src/actions (82 files)
   <- src/runtime
 ```
 
+## Live Pulse
+
+<img alt="Live pulse: executing files glow and signals travel along the import edges" src="docs/pulse.png" />
+
+The graph pages can show a running Python program: the files it is executing glow, signals travel along the import edges from caller to callee, and a file where a thread or an asyncio task is parked (network wait, sleep, lock) breathes slowly. On the atlas index the card of the directory that is executing lights up. A status line names the current file even when it is not among the nodes shown.
+
+Generate an atlas, then start your program through the sampler instead of plain `python`:
+
+```bash
+# visualize_graph(atlas=true, output="tmp/atlas") first, then:
+python /path/to/codebase-graph-mcp/pulse/codebase_pulse.py --root . --pages tmp/atlas --open -m your_package.main
+python /path/to/codebase-graph-mcp/pulse/codebase_pulse.py --root . --pages tmp/atlas --open -c your_package.cli:main -- --your --args
+python /path/to/codebase-graph-mcp/pulse/codebase_pulse.py --root . --pages tmp/atlas --open script.py
+```
+
+The program runs as usual in your terminal; the printed URL (opened by `--open`) serves the pages from the same process. A page opened late first replays the last 20 seconds, so start-up imports are visible too.
+
+How it works and what it costs: a daemon thread looks at `sys._current_frames()` about 20 times a second, which is sampling, not tracing. There is no per-call hook and no measurable slowdown, but calls shorter than the gap between two samples can be missed. A stack whose innermost frame has not moved since the previous sample counts as parked rather than active; suspended asyncio tasks are found through their running loop and reported where they await.
+
+What leaves the process: project-relative file paths and a millisecond counter. No source, no variable values, no arguments. The server binds to `127.0.0.1`, rejects any `Host` other than itself (DNS rebinding), requires a random per-run token (then a `SameSite=Strict`, `HttpOnly` cookie for linked pages), sends no CORS headers, and serves only the `.html` files directly inside `--pages`. Standard library only, Python 3.8+. Only Python programs are covered; files outside the top-N of a page show up in the status line but have no node to light, so generate live atlases with a larger `top`.
+
 ## How It Works
 
 1. Lists source files: `git ls-files` inside a repository (honours `.gitignore`), otherwise a directory walk with a built-in ignore list. Symlinks are never followed; unreadable directories are skipped; files over 1 MB and lines over 5,000 characters are treated as generated and not parsed.
@@ -271,6 +341,16 @@ src/actions (82 files)
 6. Parses `Cargo.toml` workspace for cross-crate dependency edges (maps `[workspace.dependencies]` path entries to crate entry points)
 7. Builds class inheritance hierarchy from Python files
 8. Caches the graph in memory per project root for 5 minutes, refresh with `refresh_graph`
+
+## Limitations
+
+- **File level, not symbol level.** The graph knows that `a.py` imports `b.py`, not which function calls which. "Who calls this function" is out of scope.
+- **Static imports only.** Imports are found with regular expressions, not a parser. A path computed at runtime (`importlib.import_module(name)`, `require(variable)`, plugin discovery by directory listing) produces no edge, so a file reported as having no dependents may still be loaded dynamically.
+- **Python, TypeScript/JavaScript and Rust.** Other languages are ignored. Config-file edges exist only for the OM1 layout, class hierarchy only for Python.
+- **TypeScript aliases** come from `tsconfig.json`/`jsconfig.json` `paths` and `baseUrl`; bundler-only aliases (Vite, webpack) and `package.json` `imports` are not read.
+- **Graph pages show the top N files**, not every file; raise `top` or use an atlas to see more. They load vis-network from a CDN and need network access when opened.
+- **Live pulse** covers Python programs started through the sampler: it cannot attach to a process that is already running, does not follow subprocesses, and samples rather than traces, so very short calls can be missed.
+- Scans stop at 50,000 files; files over 1 MB are treated as generated and skipped.
 
 ## Design Principles
 
@@ -293,6 +373,9 @@ src/
   git-history.ts     -> Git log analysis (churn + co-change), git ref validation
   paths.ts           -> Project root normalization and path containment checks
   visualize.ts       -> HTML graph pages, atlas directory selection and index page
+  pulse-client.ts    -> Browser code for live pulse mode, embedded in the pages
+pulse/
+  codebase_pulse.py  -> Stack sampler + local event server for live pulse (Python, stdlib only)
 test/
   fixtures/          -> Small TypeScript, Python and Rust projects the tests run against
   *.test.mjs         -> node:test suites (parser, graph, git, paths, end-to-end server)

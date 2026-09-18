@@ -16,7 +16,24 @@ Scans source files (Python, TypeScript, JavaScript, Rust), parses import/export 
 - `project_overview` — file counts, most imported files, entry points, orphans
 - `refresh_graph` — force re-scan after file changes
 
-### Architecture
+### Resources and prompts
+
+Resources (JSON, read against PROJECT_ROOT or cwd): `codebase://overview`, `codebase://graph` (full adjacency list), `codebase://cycles` (cycle groups with sizes and shortest loops).
+Prompts: `analyze-impact(file)`, `find-hotspots()`, `review-pr(diff_ref)` pre-fill a request with graph data.
+
+## How an agent should use it
+
+Call `impact_analysis` before editing a widely imported file, `multi_file_impact` (with `diff_ref`) before declaring a change done, `detect_cycles` when adding imports between packages. A file missing from the graph is an error, not "unused": check the path.
+
+## Limitations
+
+File level only (no call graph). Static imports found by regex: dynamically computed import paths produce no edge, so "no dependents" does not prove a file is unused. Python, TypeScript/JavaScript and Rust only. Graph pages show the top N files. Live pulse is Python only, must start the program itself, does not follow subprocesses, and samples at about 20 Hz.
+
+## Live pulse
+
+`pulse/codebase_pulse.py` runs a Python program (`-m module`, `-c module:function` or a script path) with a stack sampler and serves an atlas folder on 127.0.0.1 behind a random token. Opened from that URL the graph pages go live: executing files glow, signals run along import edges, parked threads and asyncio tasks breathe, the active directory's card lights up on the index. Only project-relative file paths are streamed. The atlas tool result prints the exact command.
+
+## Architecture
 - `detect_cycles` — circular dependency detection (Tarjan's SCC)
 - `package_dependencies` — package-level dependency view with configurable depth
 - `class_hierarchy` — Python class inheritance, methods, subclass overrides
@@ -94,6 +111,10 @@ All tools accept an optional `project_root` parameter. Resolution order:
 
 ### file_churn / co_change
 - `days` (number, default 90) — git history period to analyze
+
+## Live pulse
+
+`pulse/codebase_pulse.py` runs a Python program (`-m module`, `-c module:function` or a script path) with a stack sampler and serves an atlas folder on 127.0.0.1 behind a random token. Opened from that URL the graph pages go live: executing files glow, signals run along import edges, parked threads and asyncio tasks breathe, the active directory's card lights up on the index. Only project-relative file paths are streamed. The atlas tool result prints the exact command.
 
 ## Architecture
 
