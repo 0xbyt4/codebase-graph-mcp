@@ -88,8 +88,14 @@ export interface MultiFileImpactResult {
 }
 
 export interface CycleResult {
+  // shortest cycle of each strongly connected component (first 20)
   cycles: string[][];
   totalCycles: number;
+  // size of the strongly connected group each reported cycle was taken from;
+  // a 2-file loop can be the shortest path through hundreds of entangled files
+  groupSizes: number[];
+  // number of files that belong to any cycle group
+  filesInCycles: number;
 }
 
 export interface PackageEdge {
@@ -397,14 +403,25 @@ export function detectCycles(graph: GraphData): CycleResult {
     if (!indices.has(file)) strongConnect(file);
   }
 
+  // Largest groups first: they are the ones that matter
+  sccs.sort((a, b) => b.length - a.length);
+
   // Extract shortest cycle from each SCC (limit to 20)
   const cycles: string[][] = [];
+  const groupSizes: number[] = [];
   for (const scc of sccs.slice(0, 20)) {
     const cycle = scc.length === 1 ? [scc[0]] : extractShortestCycle(graph, scc);
-    if (cycle) cycles.push(cycle);
+    if (!cycle) continue;
+    cycles.push(cycle);
+    groupSizes.push(scc.length);
   }
 
-  return { cycles, totalCycles: sccs.length };
+  return {
+    cycles,
+    totalCycles: sccs.length,
+    groupSizes,
+    filesInCycles: sccs.reduce((sum, scc) => sum + scc.length, 0),
+  };
 }
 
 /**

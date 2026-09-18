@@ -395,13 +395,15 @@ server.registerTool(
         return textResult(`No circular dependencies found.${truncationNote(graph)}`);
       }
 
-      let text = `Found ${result.totalCycles} circular dependenc${result.totalCycles === 1 ? "y" : "ies"}:\n\n`;
+      let text = `Found ${result.totalCycles} circular dependenc${result.totalCycles === 1 ? "y" : "ies"} involving ${result.filesInCycles} files:\n\n`;
 
       for (let i = 0; i < result.cycles.length; i++) {
         const cycle = result.cycles[i];
         const formatted = cycle.map((f) => formatPath(f, root));
-        text += `Cycle ${i + 1} (${cycle.length} file${cycle.length === 1 ? "" : "s"}):\n`;
-        text += `  ${formatted.join(" -> ")} -> ${formatted[0]}\n\n`;
+        const group = result.groupSizes[i];
+        text += `Cycle ${i + 1} (${cycle.length} file${cycle.length === 1 ? "" : "s"}`;
+        if (group > cycle.length) text += `; shortest loop in a group of ${group} mutually dependent files`;
+        text += `):\n  ${formatted.join(" -> ")} -> ${formatted[0]}\n\n`;
       }
 
       if (result.totalCycles > result.cycles.length) {
@@ -929,7 +931,11 @@ server.registerResource(
         {
           uri: uri.href,
           mimeType: "application/json",
-          text: JSON.stringify({ totalCycles: result.totalCycles, cycles }, null, 2),
+          text: JSON.stringify(
+            { totalCycles: result.totalCycles, filesInCycles: result.filesInCycles, groupSizes: result.groupSizes, cycles },
+            null,
+            2,
+          ),
         },
       ],
     };

@@ -127,16 +127,16 @@ Total affected files: 49
 ### detect_cycles
 
 ```
-Found 2 circular dependencies:
+Found 2 circular dependencies involving 41 files:
 
-Cycle 1 (3 files):
+Cycle 1 (2 files; shortest loop in a group of 38 mutually dependent files):
+  src/core/state.py -> src/core/events.py -> src/core/state.py
+
+Cycle 2 (3 files):
   src/a.py -> src/b.py -> src/c.py -> src/a.py
-
-Cycle 2 (2 files):
-  src/utils/x.py -> src/utils/y.py -> src/utils/x.py
 ```
 
-Each file is listed once; the trailing entry closes the loop. A cycle that only exists through `import type` / `TYPE_CHECKING` imports is not reported.
+Each cycle is the shortest loop through one group of mutually dependent files (a strongly connected component), largest group first. The group size matters more than the loop: a 2-file loop can be the visible tip of hundreds of entangled files. Each file is listed once; the trailing entry closes the loop. A cycle that only exists through `import type` / `TYPE_CHECKING` imports is not reported.
 
 ### class_hierarchy
 
