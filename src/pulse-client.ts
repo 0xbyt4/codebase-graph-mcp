@@ -95,12 +95,13 @@ export const PULSE_GRAPH_JS = `${PULSE_CONNECT_JS}
     }
 
     network.on("beforeDrawing", function (ctx) {
-      var now = performance.now();
+      var now = performance.now(), zoom = network.getScale();
       ctx.save();
       ctx.globalCompositeOperation = dark() ? "lighter" : "source-over";
       Object.keys(heat).forEach(function (id) {
         var h = heat[id], p = network.getPosition(id), r = radius[id];
-        var reach = r * (2.4 + 2.3 * Math.min(h, 1.2)) + 14;
+        // Never smaller than ~30 px on screen, so activity shows on a zoomed-out graph too
+        var reach = Math.max(r * (2.4 + 2.3 * Math.min(h, 1.2)) + 14, (22 + 16 * Math.min(h, 1.2)) / zoom);
         var glow = ctx.createRadialGradient(p.x, p.y, r * 0.5, p.x, p.y, reach);
         var color = fillOf(groupOfNode[id]);
         glow.addColorStop(0, rgba(color, Math.min(0.95, 0.8 * h)));
@@ -128,14 +129,14 @@ export const PULSE_GRAPH_JS = `${PULSE_CONNECT_JS}
       Object.keys(heat).forEach(function (id) {
         var p = network.getPosition(id);
         ctx.fillStyle = "rgba(255,255,255," + Math.min(0.6, 0.5 * heat[id]) + ")";
-        ctx.beginPath(); ctx.arc(p.x, p.y, radius[id], 0, 6.2832); ctx.fill();
+        ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(radius[id], 4 / scale), 0, 6.2832); ctx.fill();
       });
       bursts.forEach(function (b) {
         var k = (now - b.t0) / 650, p = network.getPosition(b.id);
         if (k >= 1) return;
         ctx.strokeStyle = rgba(fillOf(groupOfNode[b.id]), 0.8 * (1 - k));
         ctx.lineWidth = 2 / scale;
-        ctx.beginPath(); ctx.arc(p.x, p.y, radius[b.id] + 40 * k, 0, 6.2832); ctx.stroke();
+        ctx.beginPath(); ctx.arc(p.x, p.y, radius[b.id] + (34 / scale) * k, 0, 6.2832); ctx.stroke();
       });
       var ink = dark() ? "255,255,255" : "20,20,20";
       particles.forEach(function (s) {
@@ -170,11 +171,20 @@ export const PULSE_GRAPH_JS = `${PULSE_CONNECT_JS}
       requestAnimationFrame(frame);
     }
 
-    pulseConnect(
-      function (info) { if (pill) pill.hidden = false; state = "connecting"; label(); requestAnimationFrame(frame); },
-      onEvent,
-      function (next) { state = next; label(); }
-    );
+    // Connect once the layout has settled: a replay played over a graph that
+    // is still arranging itself would be wasted.
+    var connected = false;
+    function connect() {
+      if (connected) return;
+      connected = true;
+      pulseConnect(
+        function (info) { if (pill) pill.hidden = false; state = "connecting"; label(); requestAnimationFrame(frame); },
+        onEvent,
+        function (next) { state = next; label(); }
+      );
+    }
+    network.once("stabilizationIterationsDone", connect);
+    setTimeout(connect, 8000);
   })();
 `;
 
@@ -225,7 +235,8 @@ export const PULSE_INDEX_JS = `${PULSE_CONNECT_JS}
 export const PULSE_PILL_HTML = `<span id="pulse" class="pulse" hidden><i></i><span id="pulse-text">pulse</span></span>`;
 
 export const PULSE_CSS = `
-  .pulse { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pulse { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); min-width: 0; }
+  .pulse span { max-width: 34ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pulse[hidden] { display: none; }
   .pulse i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
   .pulse.busy i { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 28%, transparent); }
