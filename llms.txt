@@ -99,6 +99,10 @@ All tools accept an optional `project_root` parameter. Resolution order:
 ### multi_file_impact
 - `files` (string[]) — list of changed file paths
 - `diff_ref` (string) — git ref to diff against (e.g. "main", "HEAD~3")
+- `limit` (number, default 50, max 500) — see below
+
+### get_dependents, impact_analysis, multi_file_impact
+- `limit` (number, default 50, max 500) — files listed per section; a longer section is summarized as per-directory counts plus its first entries (direct importers ranked by how many files depend on them, indirect ones closest first), so a hub file in a large project answers in about a thousand tokens instead of tens of thousands
 
 ### package_dependencies
 - `depth` (number, default 2) — directory depth for package grouping

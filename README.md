@@ -176,6 +176,20 @@ Indirectly affected (3):
 Total affected files: 49
 ```
 
+A widely imported file in a large project can affect thousands of files. Sections longer than `limit` (default 50, max 500) are reduced to per-directory counts plus their first entries: the most depended-on direct importers, then the closest indirect ones. `get_dependents` and `multi_file_impact` behave the same way.
+
+```
+Directly affected (639), by directory:
+  hermes_cli/  150
+  tests/hermes_cli/  145
+  tools/  59
+  ...
+Showing 50 of 639, most depended-on first:
+  - gateway/config.py
+  - tools/terminal_tool.py
+  ...
+```
+
 ### detect_cycles
 
 ```

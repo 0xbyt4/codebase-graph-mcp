@@ -98,6 +98,81 @@ const projectRootParam = z
   .optional()
   .describe("Absolute path to project root. Defaults to PROJECT_ROOT env or cwd.");
 
+const DEFAULT_LIST_LIMIT = 50;
+const MAX_LIST_LIMIT = 500;
+const MAX_SUMMARY_DIRS = 12;
+
+const limitParam = z
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_LIST_LIMIT)
+  .optional()
+  .describe(
+    `Maximum files listed per section (default ${DEFAULT_LIST_LIMIT}, max ${MAX_LIST_LIMIT}). A longer section is summarized by directory and shows its first entries.`,
+  );
+
+// First two directory levels, so monorepo layouts (apps/web, packages/core)
+// stay apart in a summary.
+function summaryDir(relPath: string): string {
+  const dirs = relPath.split(/[\\/]/).slice(0, -1);
+  return dirs.length === 0 ? "(project root)" : `${dirs.slice(0, 2).join("/")}/`;
+}
+
+interface FileSectionOptions {
+  // how the shown entries are ordered, named in the output when the list is cut
+  order?: string;
+  // applied only when the list is cut, to decide which entries are shown
+  rank?: (a: string, b: string) => number;
+  suffix?: (file: string) => string;
+}
+
+// A hub file in a large project affects thousands of files; listing them all
+// floods the caller's context and exceeds client output limits. A section
+// longer than `limit` is reduced to per-directory counts plus `limit` entries.
+function fileSection(
+  title: string,
+  files: string[],
+  root: string,
+  limit: number,
+  { order, rank, suffix }: FileSectionOptions = {},
+): string {
+  const line = (f: string) => `  - ${formatPath(f, root)}${suffix ? suffix(f) : ""}`;
+  if (files.length <= limit) {
+    return `${title} (${files.length}):\n${files.map(line).join("\n")}\n\n`;
+  }
+
+  const counts = new Map<string, number>();
+  for (const f of files) {
+    const dir = summaryDir(formatPath(f, root));
+    counts.set(dir, (counts.get(dir) ?? 0) + 1);
+  }
+  const dirs = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const shownDirs = dirs.slice(0, MAX_SUMMARY_DIRS);
+  const restFiles = dirs.slice(MAX_SUMMARY_DIRS).reduce((sum, [, n]) => sum + n, 0);
+
+  let text = `${title} (${files.length}), by directory:\n`;
+  text += shownDirs.map(([dir, n]) => `  ${dir}  ${n}`).join("\n");
+  if (restFiles > 0) text += `\n  (${dirs.length - MAX_SUMMARY_DIRS} other directories)  ${restFiles}`;
+
+  const shown = (rank ? [...files].sort(rank) : files).slice(0, limit);
+  text += `\nShowing ${shown.length} of ${files.length}${order ? `, ${order}` : ""}:\n`;
+  text += shown.map(line).join("\n");
+  return `${text}\n\n`;
+}
+
+function limitNote(limit: number, ...sections: string[][]): string {
+  return sections.some((s) => s.length > limit)
+    ? `\n\nLong sections are capped at ${limit} files; pass "limit" (max ${MAX_LIST_LIMIT}) to list more.`
+    : "";
+}
+
+// Files that many others depend on come first: a break there spreads furthest.
+function byDependentCount(graph: GraphData): (a: string, b: string) => number {
+  const count = (f: string) => graph.dependents.get(f)?.size ?? 0;
+  return (a, b) => count(b) - count(a) || a.localeCompare(b);
+}
+
 // Tool: get_dependencies
 server.registerTool(
   "get_dependencies",
@@ -136,13 +211,14 @@ server.registerTool(
   "get_dependents",
   {
     description:
-      "Get all files that import/depend on a given file. Useful to know what breaks if you change this file.",
+      "Get all files that import/depend on a given file. Useful to know what breaks if you change this file. A long list is summarized by directory; raise `limit` to see more.",
     inputSchema: {
       file: z.string().describe("Relative file path from project root (e.g. src/utils/auth.ts)"),
+      limit: limitParam,
       project_root: projectRootParam,
     },
   },
-  async ({ file, project_root }) => {
+  async ({ file, limit = DEFAULT_LIST_LIMIT, project_root }) => {
     try {
       const root = resolveRoot(project_root);
       const graph = await getGraph(root);
@@ -156,10 +232,12 @@ server.registerTool(
         );
       }
 
-      const formatted = deps
-        .map((d) => `  - ${formatPath(d, root)}${isTypeOnlyEdge(graph, d, absPath) ? " (type-only)" : ""}`)
-        .join("\n");
-      return textResult(`${deps.length} file(s) depend on ${file}:\n${formatted}`);
+      const section = fileSection(`Files that depend on ${file}`, deps, root, limit, {
+        order: "most depended-on first",
+        rank: byDependentCount(graph),
+        suffix: (d) => (isTypeOnlyEdge(graph, d, absPath) ? " (type-only)" : ""),
+      });
+      return textResult(section.trimEnd() + limitNote(limit, deps) + truncationNote(graph));
     } catch (error) {
       return errorResult(error);
     }
@@ -171,13 +249,14 @@ server.registerTool(
   "impact_analysis",
   {
     description:
-      "Analyze the full impact of changing a file. Shows directly and indirectly affected files through the dependency chain.",
+      "Analyze the full impact of changing a file. Shows directly and indirectly affected files through the dependency chain. Large results are summarized by directory with the closest files listed; raise `limit` to see more.",
     inputSchema: {
       file: z.string().describe("Relative file path from project root to analyze impact for"),
+      limit: limitParam,
       project_root: projectRootParam,
     },
   },
-  async ({ file, project_root }) => {
+  async ({ file, limit = DEFAULT_LIST_LIMIT, project_root }) => {
     try {
       const root = resolveRoot(project_root);
       const graph = await getGraph(root);
@@ -194,19 +273,22 @@ server.registerTool(
       let text = `Impact analysis for ${file}:\n\n`;
 
       if (impact.directlyAffected.length > 0) {
-        text += `Directly affected (${impact.directlyAffected.length}):\n`;
-        text += impact.directlyAffected.map((d) => `  - ${formatPath(d, root)}`).join("\n");
-        text += "\n\n";
+        text += fileSection("Directly affected", impact.directlyAffected, root, limit, {
+          order: "most depended-on first",
+          rank: byDependentCount(graph),
+        });
       }
 
       if (impact.indirectlyAffected.length > 0) {
-        text += `Indirectly affected (${impact.indirectlyAffected.length}):\n`;
-        text += impact.indirectlyAffected.map((d) => `  - ${formatPath(d, root)}`).join("\n");
-        text += "\n\n";
+        // already in breadth-first order, so the head of the list is the closest
+        text += fileSection("Indirectly affected", impact.indirectlyAffected, root, limit, {
+          order: "closest first",
+        });
       }
 
-      text += `Total affected files: ${impact.totalAffectedFiles}${truncationNote(graph)}`;
-      return textResult(text);
+      text += `Total affected files: ${impact.totalAffectedFiles}`;
+      text += limitNote(limit, impact.directlyAffected, impact.indirectlyAffected);
+      return textResult(text + truncationNote(graph));
     } catch (error) {
       return errorResult(error);
     }
@@ -298,10 +380,11 @@ server.registerTool(
         .string()
         .optional()
         .describe('Git ref to diff against (e.g. "main", "HEAD~3"). Changed files are detected automatically.'),
+      limit: limitParam,
       project_root: projectRootParam,
     },
   },
-  async ({ files, diff_ref, project_root }) => {
+  async ({ files, diff_ref, limit = DEFAULT_LIST_LIMIT, project_root }) => {
     try {
       const root = resolveRoot(project_root);
       const graph = await getGraph(root);
@@ -335,28 +418,30 @@ server.registerTool(
       filePaths = [...new Set(filePaths)];
       const impact = getMultiFileImpact(graph, filePaths);
 
-      let text = `Changed files (${impact.changedFiles.length}):\n`;
-      text += impact.changedFiles.map((f) => `  - ${formatPath(f, root)}`).join("\n");
-      text += "\n\n";
+      let text = fileSection("Changed files", impact.changedFiles, root, limit);
 
       if (impact.directlyAffected.length > 0) {
-        text += `Directly affected (${impact.directlyAffected.length}):\n`;
-        text += impact.directlyAffected.map((f) => `  - ${formatPath(f, root)}`).join("\n");
-        text += "\n\n";
+        text += fileSection("Directly affected", impact.directlyAffected, root, limit, {
+          order: "most depended-on first",
+          rank: byDependentCount(graph),
+        });
       }
 
       if (impact.indirectlyAffected.length > 0) {
-        text += `Indirectly affected (${impact.indirectlyAffected.length}):\n`;
-        text += impact.indirectlyAffected.map((f) => `  - ${formatPath(f, root)}`).join("\n");
-        text += "\n\n";
+        text += fileSection("Indirectly affected", impact.indirectlyAffected, root, limit, {
+          order: "closest first",
+        });
       }
 
       text += `Total affected files: ${impact.totalAffectedFiles}\n\n`;
-      text += `Per-file breakdown:\n`;
-      for (const { file, totalImpact } of impact.perFileBreakdown) {
+      // sorted by impact, so a cut keeps the changes that matter most
+      const breakdown = impact.perFileBreakdown.slice(0, limit);
+      text += `Per-file breakdown${breakdown.length < impact.perFileBreakdown.length ? ` (top ${breakdown.length} of ${impact.perFileBreakdown.length})` : ""}:\n`;
+      for (const { file, totalImpact } of breakdown) {
         text += `  ${formatPath(file, root)} -> ${totalImpact} total impact\n`;
       }
 
+      text = text.trimEnd() + limitNote(limit, impact.changedFiles, impact.directlyAffected, impact.indirectlyAffected);
       return textResult(text + truncationNote(graph));
     } catch (error) {
       return errorResult(error);
