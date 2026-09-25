@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildGraph } from "../build/graph.js";
 import { pickAtlasScopes, buildGraphPage, atlasFileName } from "../build/visualize.js";
@@ -74,6 +74,24 @@ test("visualize_graph atlas writes an index plus one page per major directory", 
   // running again overwrites the tool's own files
   const again = await callTool("visualize_graph", { atlas: true, open_browser: false, project_root: root });
   assert.equal(again.isError, undefined);
+});
+
+test("visualize_graph refuses to write through a symlink, even a dangling one", async () => {
+  const root = makeProject();
+  const outside = tempDir("cg-outside-");
+  symlinkSync(join(outside, "profile.sh"), join(root, "codebase_graph.html"));
+  const single = await callTool("visualize_graph", { open_browser: false, project_root: root });
+  assert.equal(single.isError, true);
+  assert.match(resultText(single), /symbolic link/);
+  assert.equal(existsSync(join(outside, "profile.sh")), false, "the link target must not be created");
+
+  mkdirSync(join(root, "docs"));
+  symlinkSync(join(outside, "atlas-index.html"), join(root, "docs", "index.html"));
+  const atlas = await callTool("visualize_graph", { atlas: true, output: "docs", open_browser: false, project_root: root });
+  assert.equal(atlas.isError, true);
+  assert.match(resultText(atlas), /symbolic link/);
+  assert.equal(existsSync(join(outside, "atlas-index.html")), false);
+  assert.equal(existsSync(join(root, "docs", "all.html")), false, "nothing is written when one target is refused");
 });
 
 test("visualize_graph atlas refuses foreign files and .html output, writing nothing", async () => {

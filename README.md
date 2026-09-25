@@ -96,7 +96,7 @@ Type-only imports (TS `import type`, Python `TYPE_CHECKING`) and Rust `mod` decl
 
 The repository is a Claude plugin: `.claude-plugin/plugin.json` describes it and starts the server, `skills/codebase-graph/` tells Claude when to reach for the tools, and the compiled server is committed under `build/`, so there is no build step.
 
-- **From the directory**: once listed, add it on claude.ai under **Customize > Plugins**. Claude Code installs the runtime dependencies itself (`npm ci --ignore-scripts` from `package-lock.json`) and starts the server in every session.
+- **From the directory**: once listed, add it on claude.ai under **Customize > Plugins**. Claude Code installs the dependencies itself (`npm ci --ignore-scripts` from `package-lock.json`) and starts the server in every session.
 - **From this repository as a marketplace**, until it is listed: on claude.ai or in the Claude desktop app open **Customize > Plugins > Add > Add marketplace**, enter `https://github.com/0xbyt4/codebase-graph-mcp`, then add the plugin. It syncs to Claude Code, or install it there directly:
 
   ```bash
@@ -125,7 +125,7 @@ npm test   # optional: rebuilds and runs the fixture-based tests, needs git on P
 
 `build/` is committed, so a clone runs as is; run `npm run build` after changing `src/`.
 
-Requires Node.js 18+. `git` is used for the history tools and, inside a repository, for the file list (so `.gitignore` is honoured). Outside a repository the tree is walked with a built-in ignore list (`node_modules`, `.git`, `dist`, `build`, `target`, `venv`, `env`, `vendor`, ...).
+Requires Node.js 20+. `git` is used for the history tools and, inside a repository, for the file list (so `.gitignore` is honoured). Outside a repository the tree is walked with a built-in ignore list (`node_modules`, `.git`, `dist`, `build`, `target`, `venv`, `env`, `vendor`, ...).
 
 Then point your client at `build/index.js`:
 
@@ -174,6 +174,8 @@ All tools accept an optional `project_root` parameter. Resolution order:
 2. `PROJECT_ROOT` environment variable (if set)
 3. `CLAUDE_PROJECT_DIR`, which Claude Code sets for a plugin-provided server (if set)
 4. Current working directory (default)
+
+`PROJECT_ROOT` deliberately wins over `CLAUDE_PROJECT_DIR`: it is the operator's explicit choice. Unset it in the shell if the plugin should follow the session directory.
 
 File arguments must stay inside the project root; anything that resolves outside it (including through a symlink) is rejected. A file the scan never saw is reported as an error rather than as "unused". `visualize_graph` only writes `.html` files and never overwrites a file it did not generate. Scans stop at 50,000 files and say so in the output.
 
@@ -375,7 +377,7 @@ Everything happens on your machine.
 
 - **Reads** source files under the project root, plus `tsconfig.json`/`jsconfig.json`, `Cargo.toml` and OM1-style config files, to build the graph.
 - **Runs** `git` inside the project root, read-only: listing files, reading the log, diffing against a ref. `visualize_graph` also opens the generated page with the system browser (`open`, `xdg-open` or `cmd /c start`) unless `open_browser` is false. No other program is started.
-- **Writes** only the `.html` files `visualize_graph` is asked for, inside the project root, and never overwrites a file it did not generate.
+- **Writes** only the `.html` files `visualize_graph` is asked for, inside the project root. It never overwrites a file it did not generate and never writes through a symbolic link.
 - **Sends nothing.** The server has no network code and talks to the assistant over stdio. Graph pages load vis-network from a CDN when you open them. The live pulse server listens on `127.0.0.1` only and streams project-relative file paths to the page, see [Live Pulse](#live-pulse).
 - **Stores nothing** between sessions; the graph cache lives in memory.
 

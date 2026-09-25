@@ -1,6 +1,6 @@
 {
   "name": "codebase-graph-mcp",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "MCP server that builds a codebase dependency graph for AI coding assistants",
   "type": "module",
   "bin": {
@@ -29,7 +29,7 @@
     "url": "https://github.com/0xbyt4/codebase-graph-mcp/issues"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",

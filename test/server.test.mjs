@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FIXTURES, REPO_ROOT, callTool, initialize, listTools, makeRepo, resultText, tempDir } from "./helpers.mjs";
+import { FIXTURES, REPO_ROOT, callTool, git, initialize, listTools, makeRepo, resultText, tempDir } from "./helpers.mjs";
 
 test("server lists the 12 tools", async () => {
   const tools = await listTools();
@@ -45,7 +45,8 @@ test("package, plugin manifest and server agree on the version; the plugin runs 
   const entry = plugin.mcpServers["codebase-graph"];
   assert.equal(entry.command, "node");
   const rel = entry.args[0].replace("${CLAUDE_PLUGIN_ROOT}/", "");
-  assert.equal(existsSync(join(REPO_ROOT, rel)), true, `${rel} must be committed`);
+  // npm test builds first, so existence proves nothing; the file must be tracked.
+  assert.equal(git(REPO_ROOT, "ls-files", "--", rel), rel, `${rel} must be committed, not only built`);
 });
 
 test("CLAUDE_PROJECT_DIR is the project root when PROJECT_ROOT is unset", async () => {

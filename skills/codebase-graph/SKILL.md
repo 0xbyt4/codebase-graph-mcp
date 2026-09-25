@@ -7,7 +7,7 @@ The codebase-graph MCP server keeps a file-level import graph of the current pro
 
 ## Before changing a file
 
-1. Run `impact_analysis` on the file. Read the direct dependents first; they are ranked by how many files depend on them.
+1. Run `impact_analysis` on the file. Read the direct dependents first; when the list is long it is summarized by directory and the entries shown are the most depended-on files.
 2. For several files, or a branch, run `multi_file_impact` with `files` or with `diff_ref` (for example `main`).
 3. When a list is long, narrow it with `limit` instead of paging through everything.
 
