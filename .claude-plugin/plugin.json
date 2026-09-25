@@ -6,6 +6,10 @@
   "author": { "name": "0xbyt4", "url": "https://github.com/0xbyt4" },
   "homepage": "https://github.com/0xbyt4/codebase-graph-mcp#readme",
   "repository": "https://github.com/0xbyt4/codebase-graph-mcp",
+  "documentationUrl": "https://github.com/0xbyt4/codebase-graph-mcp#readme",
+  "supportUrl": "https://github.com/0xbyt4/codebase-graph-mcp/issues",
+  "privacyPolicyUrl": "https://github.com/0xbyt4/codebase-graph-mcp#what-the-server-runs-and-sends",
+  "termsOfServiceUrl": "https://github.com/0xbyt4/codebase-graph-mcp/blob/main/LICENSE",
   "license": "MIT",
   "keywords": ["mcp", "codebase", "dependency-graph", "impact-analysis", "refactoring", "architecture"],
   "mcpServers": {
