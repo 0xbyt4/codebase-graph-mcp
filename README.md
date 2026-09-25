@@ -109,7 +109,7 @@ The repository is a Claude plugin: `.claude-plugin/plugin.json` describes it and
   ```bash
   git clone https://github.com/0xbyt4/codebase-graph-mcp.git
   cd codebase-graph-mcp && npm ci --ignore-scripts
-  claude --plugin-dir "$PWD"
+  claude --plugin-dir .
   ```
 
 The server runs in Claude Code and in Cowork sessions on your computer. The claude.ai chat surface does not start local servers, so there the plugin's skill loads but the tools do not.
