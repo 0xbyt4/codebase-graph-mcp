@@ -25,6 +25,16 @@ test("server lists the 12 tools", async () => {
   );
 });
 
+test("every tool declares annotations; only visualize_graph writes", async () => {
+  const tools = await listTools();
+  for (const tool of tools) {
+    assert.ok(tool.annotations && typeof tool.annotations.readOnlyHint === "boolean", `${tool.name} lacks annotations`);
+    assert.equal(tool.annotations.readOnlyHint, tool.name !== "visualize_graph", tool.name);
+    assert.equal(tool.annotations.destructiveHint, false, tool.name);
+    assert.equal(tool.annotations.openWorldHint, false, tool.name);
+  }
+});
+
 test("package, plugin manifest and server agree on the version; the plugin runs the committed build", async () => {
   const pkg = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf-8"));
   const plugin = JSON.parse(readFileSync(join(REPO_ROOT, ".claude-plugin", "plugin.json"), "utf-8"));

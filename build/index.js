@@ -32,6 +32,10 @@ function resolveRoot(override) {
     return normalizeRoot(resolve(getDefaultRoot(), override));
 }
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+// MCP tool annotations: every tool only reads the project, except
+// visualize_graph, which writes HTML pages inside it (never over foreign files).
+const READ_ONLY_TOOL = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+const WRITES_PAGES_TOOL = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 async function getGraph(root) {
     const cached = graphCache.get(root);
     if (cached && Date.now() - cached.createdAt < CACHE_TTL_MS)
@@ -122,6 +126,7 @@ function byDependentCount(graph) {
 }
 // Tool: get_dependencies
 server.registerTool("get_dependencies", {
+    annotations: { title: "Get dependencies", ...READ_ONLY_TOOL },
     description: "Get all files that a given file imports/depends on. Accepts a relative path from project root. Type-only imports (TS `import type`, Python TYPE_CHECKING) are marked.",
     inputSchema: {
         file: z.string().describe("Relative file path from project root (e.g. src/index.ts)"),
@@ -148,6 +153,7 @@ server.registerTool("get_dependencies", {
 });
 // Tool: get_dependents
 server.registerTool("get_dependents", {
+    annotations: { title: "Get dependents", ...READ_ONLY_TOOL },
     description: "Get all files that import/depend on a given file. Useful to know what breaks if you change this file. A long list is summarized by directory; raise `limit` to see more.",
     inputSchema: {
         file: z.string().describe("Relative file path from project root (e.g. src/utils/auth.ts)"),
@@ -177,6 +183,7 @@ server.registerTool("get_dependents", {
 });
 // Tool: impact_analysis
 server.registerTool("impact_analysis", {
+    annotations: { title: "Impact analysis", ...READ_ONLY_TOOL },
     description: "Analyze the full impact of changing a file. Shows directly and indirectly affected files through the dependency chain. Large results are summarized by directory with the closest files listed; raise `limit` to see more.",
     inputSchema: {
         file: z.string().describe("Relative file path from project root to analyze impact for"),
@@ -216,6 +223,7 @@ server.registerTool("impact_analysis", {
 });
 // Tool: project_overview
 server.registerTool("project_overview", {
+    annotations: { title: "Project overview", ...READ_ONLY_TOOL },
     description: "Get a high-level overview of the project's dependency structure. Shows file counts, most imported files, entry points, and orphan files.",
     inputSchema: {
         project_root: projectRootParam,
@@ -259,6 +267,7 @@ server.registerTool("project_overview", {
 });
 // Tool: refresh_graph
 server.registerTool("refresh_graph", {
+    annotations: { title: "Refresh graph", ...READ_ONLY_TOOL },
     description: "Force refresh the dependency graph cache. Use this after making file changes.",
     inputSchema: {
         project_root: projectRootParam,
@@ -276,6 +285,7 @@ server.registerTool("refresh_graph", {
 });
 // Tool: multi_file_impact
 server.registerTool("multi_file_impact", {
+    annotations: { title: "Multi-file impact", ...READ_ONLY_TOOL },
     description: "Analyze the combined impact of multiple changed files. Accepts a list of files or a git diff ref to automatically detect changed files. Useful for PR reviews.",
     inputSchema: {
         files: z.array(z.string()).optional().describe("List of changed file paths (relative to project root)"),
@@ -341,6 +351,7 @@ server.registerTool("multi_file_impact", {
 });
 // Tool: detect_cycles
 server.registerTool("detect_cycles", {
+    annotations: { title: "Detect cycles", ...READ_ONLY_TOOL },
     description: "Detect circular dependencies in the project. Uses Tarjan's SCC algorithm to find runtime dependency cycles; type-only imports are ignored.",
     inputSchema: {
         project_root: projectRootParam,
@@ -374,6 +385,7 @@ server.registerTool("detect_cycles", {
 });
 // Tool: class_hierarchy
 server.registerTool("class_hierarchy", {
+    annotations: { title: "Class hierarchy", ...READ_ONLY_TOOL },
     description: "Get Python class inheritance hierarchy, methods, and subclass overrides. Provide either a class name, a file path, or a method name to find all classes that define/override it.",
     inputSchema: {
         class_name: z.string().optional().describe("Class name to look up (e.g. 'BaseHandler', 'Connector')"),
@@ -468,6 +480,7 @@ server.registerTool("class_hierarchy", {
 });
 // Tool: file_churn
 server.registerTool("file_churn", {
+    annotations: { title: "File churn", ...READ_ONLY_TOOL },
     description: "Analyze file change frequency from git history. Shows which files change most often - useful for identifying hotspots and assessing change risk.",
     inputSchema: {
         days: z.number().int().positive().max(365).optional().describe("Number of days to analyze (default: 90, max: 365)"),
@@ -496,6 +509,7 @@ server.registerTool("file_churn", {
 });
 // Tool: co_change
 server.registerTool("co_change", {
+    annotations: { title: "Co-change", ...READ_ONLY_TOOL },
     description: "Find files that frequently change together with a given file. Reveals hidden coupling not visible in import graph.",
     inputSchema: {
         file: z.string().describe("File to analyze co-changes for (relative to project root)"),
@@ -530,6 +544,7 @@ server.registerTool("co_change", {
 });
 // Tool: package_dependencies
 server.registerTool("package_dependencies", {
+    annotations: { title: "Package dependencies", ...READ_ONLY_TOOL },
     description: "Get package/module level dependency view. Aggregates file-level edges into package-level relationships to show architectural structure.",
     inputSchema: {
         depth: z
@@ -597,6 +612,7 @@ server.registerTool("package_dependencies", {
 });
 // Tool: visualize_graph
 server.registerTool("visualize_graph", {
+    annotations: { title: "Visualize graph", ...WRITES_PAGES_TOOL },
     description: "Generate an interactive HTML dependency graph and try to open it in the browser. Files are nodes colored by directory, edges are dependency arrows, node size reflects how many files import it. With atlas=true it writes a whole folder instead: one graph for the project, one per major directory, and an index page with totals, hotspots and cycles.",
     inputSchema: {
         top: z
