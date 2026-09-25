@@ -97,6 +97,13 @@ Type-only imports (TS `import type`, Python `TYPE_CHECKING`) and Rust `mod` decl
 The repository is a Claude plugin: `.claude-plugin/plugin.json` describes it and starts the server, `skills/codebase-graph/` tells Claude when to reach for the tools, and the compiled server is committed under `build/`, so there is no build step.
 
 - **From the directory**: once listed, add it on claude.ai under **Customize > Plugins**. Claude Code installs the runtime dependencies itself (`npm ci --ignore-scripts` from `package-lock.json`) and starts the server in every session.
+- **From this repository as a marketplace**, until it is listed: on claude.ai or in the Claude desktop app open **Customize > Plugins > Add > Add marketplace**, enter `https://github.com/0xbyt4/codebase-graph-mcp`, then add the plugin. It syncs to Claude Code, or install it there directly:
+
+  ```bash
+  claude plugin marketplace add 0xbyt4/codebase-graph-mcp
+  claude plugin install codebase-graph-mcp@codebase-graph-mcp
+  ```
+
 - **From a clone**, for one session:
 
   ```bash
@@ -409,6 +416,7 @@ Everything happens on your machine.
 ```
 .claude-plugin/
   plugin.json        -> Claude plugin manifest; starts build/index.js as the plugin's MCP server
+  marketplace.json   -> Lists this repository as a one-plugin marketplace
 skills/
   codebase-graph/    -> Skill: when to use which tool
 build/               -> Compiled server, committed so the plugin needs no build step

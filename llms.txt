@@ -55,7 +55,7 @@ Type-only imports and Rust `mod` declarations never count as circular dependenci
 ## Installation
 
 ### As a Claude plugin
-The repository is a Claude plugin (`.claude-plugin/plugin.json` with the server definition, `skills/`, compiled server committed under `build/`). Add it from the Claude directory (claude.ai, Customize > Plugins), or try a clone for one session:
+The repository is a Claude plugin (`.claude-plugin/plugin.json` with the server definition, `skills/`, compiled server committed under `build/`). Add it from the Claude directory (claude.ai, Customize > Plugins), add the repository as a marketplace (`claude plugin marketplace add 0xbyt4/codebase-graph-mcp` then `claude plugin install codebase-graph-mcp@codebase-graph-mcp`, or Customize > Plugins > Add > Add marketplace with the repository URL on claude.ai), or try a clone for one session:
 ```bash
 git clone https://github.com/0xbyt4/codebase-graph-mcp.git
 cd codebase-graph-mcp && npm ci --ignore-scripts

@@ -1,0 +1,13 @@
+{
+  "name": "codebase-graph-mcp",
+  "owner": { "name": "0xbyt4", "url": "https://github.com/0xbyt4" },
+  "description": "Dependency graph MCP server for AI coding assistants: impact analysis, circular imports, git churn and interactive graph pages for TypeScript/JavaScript, Python and Rust.",
+  "plugins": [
+    {
+      "name": "codebase-graph-mcp",
+      "source": ".",
+      "description": "Dependency graph of your codebase for safer changes: what a file imports, what depends on it, what a change would break, circular imports, git churn and co-change, and interactive graph pages.",
+      "category": "development"
+    }
+  ]
+}
