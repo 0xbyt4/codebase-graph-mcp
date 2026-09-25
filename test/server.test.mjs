@@ -115,13 +115,13 @@ test("impact tools summarize a hub file instead of listing every affected file",
     assert.match(text, /Showing 50 of 120, most depended-on first:\n  - svc\/a\/m_000\.py\n/);
     assert.match(text, /Indirectly affected \(80\), by directory:\n  jobs\/  80\nShowing 50 of 80, closest first:/);
     assert.match(text, /Total affected files: 200/);
-    assert.match(text, /pass "limit" \(max 500\)/);
+    assert.match(text, /raise "limit" \(max 500\)/);
     assert.ok(text.split("\n").length < 120, "a capped answer stays short");
 
     const full = resultText(await callTool("impact_analysis", { file: "core/hub.py", limit: 500, project_root: root }));
     assert.match(full, /Directly affected \(120\):\n/);
     assert.match(full, /Indirectly affected \(80\):\n/);
-    assert.doesNotMatch(full, /by directory|pass "limit"/);
+    assert.doesNotMatch(full, /by directory|raise "limit"/);
     assert.equal(full.match(/^  - /gm).length, 200);
 
     const dependents = resultText(await callTool("get_dependents", { file: "core/hub.py", limit: 10, project_root: root }));

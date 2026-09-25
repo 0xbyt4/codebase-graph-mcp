@@ -174,7 +174,7 @@ function fileSection(
 
 function limitNote(limit: number, ...sections: string[][]): string {
   return sections.some((s) => s.length > limit)
-    ? `\n\nLong sections are capped at ${limit} files; pass "limit" (max ${MAX_LIST_LIMIT}) to list more.`
+    ? `\n\nLong sections are capped at ${limit} files; raise "limit" (max ${MAX_LIST_LIMIT}) to list more.`
     : "";
 }
 
@@ -861,7 +861,7 @@ server.registerTool(
         const pulseHint =
           `Live pulse (Python programs): run the program through the sampler and the pages light up where it executes.\n` +
           `  python ${PULSE_SCRIPT} --root ${root} --pages ${outDir} --open -m your.module\n` +
-          `  (use -c package.module:function for a console-script entry point, or pass a script path)`;
+          `  (use -c package.module:function for a console-script entry point, or give a script path)`;
         return textResult(
           `Atlas saved to ${outDir}\n\n  index.html\n${list}\n\n${await openNote(indexPath)}${truncationNote(graph)}\n\n${pulseHint}`,
         );
