@@ -8,6 +8,7 @@ import { writeFile, readFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import {
   buildGraph,
   getDependencies,
@@ -33,16 +34,21 @@ import {
   type AtlasEntry,
 } from "./visualize.js";
 
+// One version for the npm package, the plugin manifest and the server.
+const { version: VERSION } = createRequire(import.meta.url)("../package.json") as { version: string };
+
 const server = new McpServer({
   name: "codebase-graph",
-  version: "0.3.0",
+  version: VERSION,
 });
 
 // Cache: supports multiple project roots
 const graphCache = new Map<string, { data: GraphData; createdAt: number }>();
 
+// PROJECT_ROOT is an explicit operator choice; CLAUDE_PROJECT_DIR is what
+// Claude Code sets for a plugin-provided server; cwd is the last resort.
 function getDefaultRoot(): string {
-  return normalizeRoot(process.env.PROJECT_ROOT || process.cwd());
+  return normalizeRoot(process.env.PROJECT_ROOT || process.env.CLAUDE_PROJECT_DIR || process.cwd());
 }
 
 function resolveRoot(override?: string): string {
@@ -96,7 +102,7 @@ function truncationNote(graph: GraphData): string {
 const projectRootParam = z
   .string()
   .optional()
-  .describe("Absolute path to project root. Defaults to PROJECT_ROOT env or cwd.");
+  .describe("Absolute path to project root. Defaults to PROJECT_ROOT env, then CLAUDE_PROJECT_DIR, then cwd.");
 
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 500;

@@ -56,9 +56,13 @@ export function makeRepo() {
  * Drive the built server over stdio: initialize, then one tools/call.
  * Resolves with the tool result object.
  */
-export function callTool(name, args, { cwd } = {}) {
+export function callTool(name, args, { cwd, env } = {}) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, [SERVER], { cwd: cwd || REPO_ROOT, stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(process.execPath, [SERVER], {
+      cwd: cwd || REPO_ROOT,
+      env: env || process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     let buf = "";
     let stderr = "";
     const send = (msg) => proc.stdin.write(JSON.stringify(msg) + "\n");
@@ -97,9 +101,15 @@ export function callTool(name, args, { cwd } = {}) {
 }
 
 export function listTools() {
+  return initialize().then((r) => r.tools);
+}
+
+/** Initialize, then tools/list. Resolves with the initialize result plus the tools. */
+export function initialize() {
   return new Promise((resolve, reject) => {
     const proc = spawn(process.execPath, [SERVER], { cwd: REPO_ROOT, stdio: ["pipe", "pipe", "pipe"] });
     let buf = "";
+    let init;
     const send = (msg) => proc.stdin.write(JSON.stringify(msg) + "\n");
     const timer = setTimeout(() => {
       proc.kill();
@@ -114,12 +124,13 @@ export function listTools() {
         if (!line) continue;
         const msg = JSON.parse(line);
         if (msg.id === 1) {
+          init = msg.result;
           send({ jsonrpc: "2.0", method: "notifications/initialized" });
           send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
         } else if (msg.id === 2) {
           clearTimeout(timer);
           proc.kill();
-          resolve(msg.result.tools);
+          resolve({ ...init, tools: msg.result.tools });
         }
       }
     });

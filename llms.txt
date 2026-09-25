@@ -54,15 +54,21 @@ Type-only imports and Rust `mod` declarations never count as circular dependenci
 
 ## Installation
 
-### 1. Build from source (required)
+### As a Claude plugin
+The repository is a Claude plugin (`.claude-plugin/plugin.json` with the server definition, `skills/`, compiled server committed under `build/`). Add it from the Claude directory (claude.ai, Customize > Plugins), or try a clone for one session:
+```bash
+git clone https://github.com/0xbyt4/codebase-graph-mcp.git
+cd codebase-graph-mcp && npm ci --ignore-scripts
+claude --plugin-dir "$PWD"
+```
+The server runs in Claude Code and local Cowork sessions; the claude.ai chat surface does not start local servers.
+
+### As a plain MCP server
 ```bash
 git clone https://github.com/0xbyt4/codebase-graph-mcp.git
 cd codebase-graph-mcp
-npm install
-npm run build
+npm install   # build/ is committed; run `npm run build` after changing src/
 ```
-
-### 2. Connect to your AI assistant
 
 #### Claude Code
 ```bash
@@ -83,7 +89,11 @@ mcp_servers:
 All tools accept an optional `project_root` parameter. Resolution order:
 1. `project_root` parameter in tool call
 2. `PROJECT_ROOT` environment variable
-3. Current working directory
+3. `CLAUDE_PROJECT_DIR` (set by Claude Code for a plugin-provided server)
+4. Current working directory
+
+## What It Runs and Sends
+Runs on your machine only: reads project files, runs read-only `git` commands inside the project root, writes `.html` only where `visualize_graph` is asked to, opens that page with the system browser unless `open_browser` is false, and makes no network requests. Graph pages load vis-network from a CDN when opened; the pulse server listens on 127.0.0.1 only.
 
 ## Key Parameters
 

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FIXTURES, callTool, listTools, makeRepo, resultText, tempDir } from "./helpers.mjs";
+import { FIXTURES, REPO_ROOT, callTool, initialize, listTools, makeRepo, resultText, tempDir } from "./helpers.mjs";
 
 test("server lists the 12 tools", async () => {
   const tools = await listTools();
@@ -23,6 +23,27 @@ test("server lists the 12 tools", async () => {
       "visualize_graph",
     ],
   );
+});
+
+test("package, plugin manifest and server agree on the version; the plugin runs the committed build", async () => {
+  const pkg = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf-8"));
+  const plugin = JSON.parse(readFileSync(join(REPO_ROOT, ".claude-plugin", "plugin.json"), "utf-8"));
+  assert.equal(plugin.version, pkg.version);
+  const info = await initialize();
+  assert.equal(info.serverInfo.version, pkg.version);
+
+  const entry = plugin.mcpServers["codebase-graph"];
+  assert.equal(entry.command, "node");
+  const rel = entry.args[0].replace("${CLAUDE_PLUGIN_ROOT}/", "");
+  assert.equal(existsSync(join(REPO_ROOT, rel)), true, `${rel} must be committed`);
+});
+
+test("CLAUDE_PROJECT_DIR is the project root when PROJECT_ROOT is unset", async () => {
+  const env = { ...process.env, CLAUDE_PROJECT_DIR: FIXTURES.ts };
+  delete env.PROJECT_ROOT;
+  const result = await callTool("get_dependencies", { file: "src/b.ts" }, { cwd: tempDir("cg-cwd-"), env });
+  assert.equal(result.isError, undefined);
+  assert.match(resultText(result), /src\/a\.ts/);
 });
 
 test("get_dependencies marks type-only imports; unknown files are an error", async () => {

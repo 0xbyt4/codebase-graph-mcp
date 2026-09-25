@@ -1,0 +1,17 @@
+{
+  "name": "codebase-graph-mcp",
+  "displayName": "Codebase Graph",
+  "version": "0.4.0",
+  "description": "Dependency graph of your codebase for safer changes: what a file imports, what depends on it, what a change would break, circular imports, git churn and co-change, and interactive graph pages. TypeScript/JavaScript, Python and Rust.",
+  "author": { "name": "0xbyt4", "url": "https://github.com/0xbyt4" },
+  "homepage": "https://github.com/0xbyt4/codebase-graph-mcp#readme",
+  "repository": "https://github.com/0xbyt4/codebase-graph-mcp",
+  "license": "MIT",
+  "keywords": ["mcp", "codebase", "dependency-graph", "impact-analysis", "refactoring", "architecture"],
+  "mcpServers": {
+    "codebase-graph": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/build/index.js"]
+    }
+  }
+}
