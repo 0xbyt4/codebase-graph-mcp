@@ -135,9 +135,9 @@ Then point your client at `build/index.js`:
 claude mcp add -s user codebase-graph -- node /path/to/codebase-graph-mcp/build/index.js
 ```
 
-#### Claude Code (manual config)
+#### Any MCP client with a JSON config
 
-Add to `~/.claude.json`:
+The same server as a generic stdio entry, for clients that take this shape:
 
 ```json
 {
